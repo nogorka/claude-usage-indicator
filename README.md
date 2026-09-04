@@ -6,12 +6,12 @@ AppIndicator3). Показывает окна 5 часов / 7 дней и лю�
 
 ## Статус
 
-В разработке. Панельный индикатор с текстовым лейблом, меню и обновлением
-раз в тик — работает и покрыт тестами. Окно деталей с полноценными барами
-(`Gtk.LevelBar`) — следующий шаг, пока не реализовано. Перед тем как считать
-демона готовым к постоянному использованию, ещё предстоит: живой прогон
-глазами (сценарии из `docs/PLAN.md`), финальный аудит ветки и
-`superpowers:verification-before-completion`.
+Панельный индикатор с текстовым лейблом, меню, окном деталей
+(`Gtk.LevelBar` на каждое окно лимита) и обновлением раз в тик — работает
+и покрыт тестами. Сквозной прогон на живой машине пройден (хук → файл
+состояния → демон → живая панель, устаревание, `systemctl restart`) —
+доказательства в `docs/PLAN.md`. Перед мерджем ветки остаются финальный
+аудит и `superpowers:verification-before-completion`.
 
 ## Как это устроено
 
@@ -85,7 +85,8 @@ bash tests/test_statusline.sh
 
 Структура: `src/claude_usage_indicator/` — демон (state.py читает и
 валидирует файл состояния, bar.py считает текст/бары, indicator.py —
-AppIndicator3/GTK3); `bin/claude-statusline.sh` — хук statusLine;
+AppIndicator3/GTK3, window.py — окно «Подробнее» с барами по каждому
+окну лимита); `bin/claude-statusline.sh` — хук statusLine;
 `scripts/patch-settings.py` — правка `settings.json` в изоляции от
 install.sh/uninstall.sh; `systemd/` — шаблон юнита; `docs/PLAN.md` — план и
 зафиксированные решения.
