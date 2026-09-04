@@ -81,6 +81,7 @@ statusLine (bash, bin/claude-statusline.sh)
 ```bash
 PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_*.py'
 bash tests/test_statusline.sh
+bash tests/test_install_uninstall.sh
 ```
 
 Структура: `src/claude_usage_indicator/` — демон (state.py читает и
