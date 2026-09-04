@@ -1,7 +1,7 @@
 """AyatanaAppIndicator3-обвязка: метка в панели, меню, таймер опроса раз в 10 секунд.
 
 GTK-код тестами не покрыт — нужен живой X11/Wayland-сеанс с шиной indicator,
-проверяется живым прогоном в Task 5. Здесь сознательно тонкий слой поверх
+проверяется только живым запуском демона. Здесь сознательно тонкий слой поверх
 bar.py/state.py: вся логика, которую можно протестировать без GTK, живёт там.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ _ICON_NORMAL = "utilities-system-monitor"
 _ICON_ALARM = "dialog-warning"
 _POLL_INTERVAL_S = 10
 _UNIT_NAME = "claude-usage-indicator.service"
-# Снимок для честного «нет данных», когда рендер реального снимка упал (находка ревью #3):
+# Снимок для честного «нет данных», когда рендер реального снимка упал:
 # panel_label на пустых windows/order гарантированно не бросает — сам по себе fallback безопасен.
 _RENDER_FAILED_SNAPSHOT = state.Snapshot(
     updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem="read_error"
@@ -68,7 +68,7 @@ def set_autostart(enabled: bool) -> None:
 
 
 def on_details() -> None:
-    """Заглушка: окно «Подробнее» откроет Task 4."""
+    """Заглушка: окно «Подробнее» пока не реализовано."""
     return None
 
 
@@ -98,7 +98,7 @@ class Indicator:
         Метка и статус тревоги — функции текущего времени (is_stale/panel_state),
         поэтому красятся на каждый тик независимо от того, поменялся ли снимок:
         иначе закрытый Claude Code (файл больше не пишется, снимок равен
-        самому себе) никогда не показал бы «(устарело)» (находка ревью #2).
+        самому себе) никогда не показал бы «(устарело)».
         """
         snapshot = state.read_state()
         rebuild_menu = snapshot != self._last_snapshot
@@ -115,7 +115,7 @@ class Indicator:
             self._safe_set_menu(snapshot, now)
 
     def _safe_panel_state(self, snapshot: state.Snapshot, now: float) -> tuple[str, bool]:
-        """Рендер не должен убивать таймер опроса (находка ревью #3): падение — честное «нет данных»."""
+        """Рендер не должен убивать таймер опроса: падение — честное «нет данных»."""
         try:
             return bar.panel_state(snapshot, now)
         except Exception:

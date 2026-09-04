@@ -158,7 +158,7 @@ class IsStaleTests(unittest.TestCase):
 
 
 class PanelStateTests(unittest.TestCase):
-    """panel_state пересчитывает метку и тревогу от now_epoch — чинит вечно-свежий статус (находка #2).
+    """panel_state пересчитывает метку и тревогу от now_epoch — чинит вечно-свежий статус.
 
     _apply() в indicator.py перерисовывает метку каждый тик таймера, а не только
     когда файл состояния реально изменился: один и тот же снимок обязан
@@ -285,13 +285,12 @@ class FormatResetExtremeTzTests(unittest.TestCase):
         time.tzset()
 
     def test_upper_bound_does_not_overflow_past_datetime_max(self) -> None:
-        # astimezone() на UTC+14 у конца 9999 года без запаса роняет OverflowError —
-        # именно этот сценарий выловило повторное ревью фикса #3.
+        # astimezone() на UTC+14 у конца 9999 года без запаса роняет OverflowError.
         format_reset(_MAX_RESETS_EPOCH, now_epoch=0)
 
 
 class ProblemTextTests(unittest.TestCase):
-    """Человеческие формулировки problem для меню (находка #6) — «нет данных» больше не одно на всё."""
+    """Человеческие формулировки problem для меню — «нет данных» больше не одно на всё."""
 
     _KNOWN_CODES = (
         "no_file",

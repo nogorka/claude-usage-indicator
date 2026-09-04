@@ -47,7 +47,7 @@ def plan_install(settings: dict[str, Any], command: str) -> dict[str, Any] | Non
     """Новый словарь настроек с добавленным statusLine, либо None — менять нечего.
 
     StatusLineConflict — statusLine уже занят чужим значением, вызывающий
-    код обязан остановиться и ничего не писать на диск (решение контроллера).
+    код обязан остановиться и ничего не писать на диск.
     """
     expected = _expected_block(command)
     current = settings.get("statusLine")
@@ -86,9 +86,8 @@ def atomic_write(path: Path, data: dict[str, Any]) -> None:
 
     settings.json не наш файл: mkstemp создаёт временный файл с правами 0600,
     и без явного chmod os.replace() тихо сузил бы права уже существующего
-    файла на каждый прогон (найдено повторным ревью Task 3). Права нового
-    файла (его ещё не было) намеренно остаются дефолтными 0600 — сужать
-    нечего, консервативный выбор безопаснее.
+    файла на каждый прогон. Права нового файла (его ещё не было) намеренно
+    остаются дефолтными 0600 — сужать нечего, консервативный выбор безопаснее.
     """
     original_mode = path.stat().st_mode if path.exists() else None
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 """Тесты scripts/patch-settings.py — правка ~/.claude/settings.json в изоляции.
 
-Файл называется через дефис (решение контроллера Task 3, не пакетное имя),
-поэтому импортируется через importlib по пути, а не обычным import.
+Файл называется через дефис, а не как пакетный модуль, поэтому импортируется
+через importlib по пути, а не обычным import.
 Ни один тест не трогает настоящий ~/.claude/settings.json — только tempfile.
 """
 from __future__ import annotations
@@ -141,7 +141,7 @@ class BackupAndAtomicWriteTests(unittest.TestCase):
     def test_atomic_write_preserves_existing_file_permissions(self) -> None:
         # mkstemp создаёт временный файл с правами 0600 — без явного chmod
         # os.replace() тихо сузил бы права уже существующего settings.json
-        # на каждый прогон (находка повторного ревью Task 3).
+        # на каждый прогон.
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"
             path.write_text('{"old": true}', encoding="utf-8")
