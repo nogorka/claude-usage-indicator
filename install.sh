@@ -86,9 +86,13 @@ patch_settings() {
     "$PYTHON" "$REPO_ROOT/scripts/patch-settings.py" "${args[@]}"
 }
 
+# Сначала самый вероятный сбой (statusLine занят кем-то ещё) — если он
+# упадёт, симлинк и юнит остаются нетронутыми, автозапуска не будет вовсе
+# (находка повторного ревью Task 3: обратный порядок оставлял на диске
+# полу-установленный, но автозапускаемый демон при провале последнего шага).
+patch_settings
 link_hook
 install_unit
 enable_unit
-patch_settings
 
 echo "Готово. Статус: systemctl --user status $UNIT_NAME"

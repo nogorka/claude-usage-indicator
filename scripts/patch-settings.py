@@ -13,6 +13,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -81,13 +82,23 @@ def backup_settings(path: Path) -> Path | None:
 
 
 def atomic_write(path: Path, data: dict[str, Any]) -> None:
-    """Временный файл в целевом каталоге + os.replace — та же схема, что в bin/claude-statusline.sh."""
+    """Временный файл в целевом каталоге + os.replace — та же схема, что в bin/claude-statusline.sh.
+
+    settings.json не наш файл: mkstemp создаёт временный файл с правами 0600,
+    и без явного chmod os.replace() тихо сузил бы права уже существующего
+    файла на каждый прогон (найдено повторным ревью Task 3). Права нового
+    файла (его ещё не было) намеренно остаются дефолтными 0600 — сужать
+    нечего, консервативный выбор безопаснее.
+    """
+    original_mode = path.stat().st_mode if path.exists() else None
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".settings.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh, indent=2, ensure_ascii=False)
             fh.write("\n")
+        if original_mode is not None:
+            os.chmod(tmp_name, stat.S_IMODE(original_mode))
         os.replace(tmp_name, path)
     except BaseException:
         Path(tmp_name).unlink(missing_ok=True)

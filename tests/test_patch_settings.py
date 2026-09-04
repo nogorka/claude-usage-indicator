@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -135,6 +137,17 @@ class BackupAndAtomicWriteTests(unittest.TestCase):
             path.write_text('{"old": true}', encoding="utf-8")
             patch_settings.atomic_write(path, {"new": True})
             self.assertEqual(json.loads(path.read_text(encoding="utf-8")), {"new": True})
+
+    def test_atomic_write_preserves_existing_file_permissions(self) -> None:
+        # mkstemp создаёт временный файл с правами 0600 — без явного chmod
+        # os.replace() тихо сузил бы права уже существующего settings.json
+        # на каждый прогон (находка повторного ревью Task 3).
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "settings.json"
+            path.write_text('{"old": true}', encoding="utf-8")
+            os.chmod(path, 0o644)
+            patch_settings.atomic_write(path, {"new": True})
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
