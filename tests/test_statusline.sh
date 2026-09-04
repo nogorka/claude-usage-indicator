@@ -262,6 +262,84 @@ test_display_name_sanitization() {
     }'
 }
 
+test_model_scoped_non_object_item_skipped() {
+    local desc="model_scoped: не-объект в массиве пропускается, соседнее окно остаётся"
+    run_hook "$(fixture model_scoped_non_object_item.json)"
+    assert_common "$desc"
+    assert_stdout "$desc" "5h ▓▓▓░░░░░ 42%"
+    assert_state_file "$desc" '{
+        "schema": 1,
+        "limits": {"five_hour": {"percent": 42.3, "resets_epoch": 1788550200}},
+        "order": ["five_hour"]
+    }'
+}
+
+test_model_scoped_iso8601_forms() {
+    local desc="model_scoped: формы resets_at (дробные секунды, смещения, эпоха числом)"
+    run_hook "$(fixture model_scoped_iso8601_forms.json)"
+    assert_common "$desc"
+    local expect_z expect_off_plus expect_off_minus key epoch
+    expect_z="$(date -d "2026-09-07T00:00:00Z" +%s)"
+    expect_off_plus="$(date -d "2026-09-07T00:00:00+03:00" +%s)"
+    expect_off_minus="$(date -d "2026-09-07T00:00:00-05:00" +%s)"
+    for key in "model:z-bare" "model:z-millis" "model:z-micros"; do
+        epoch="$(jq -r --arg k "$key" '.limits[$k].resets_epoch' "$HOOK_STATE_FILE")"
+        assert_eq "$desc: $key" "$expect_z" "$epoch"
+    done
+    epoch="$(jq -r '.limits["model:offset-plus-colon"].resets_epoch' "$HOOK_STATE_FILE")"
+    assert_eq "$desc: +03:00" "$expect_off_plus" "$epoch"
+    epoch="$(jq -r '.limits["model:offset-minus-colon"].resets_epoch' "$HOOK_STATE_FILE")"
+    assert_eq "$desc: -05:00" "$expect_off_minus" "$epoch"
+    epoch="$(jq -r '.limits["model:offset-plus-nocolon"].resets_epoch' "$HOOK_STATE_FILE")"
+    assert_eq "$desc: +0300 без двоеточия" "$expect_off_plus" "$epoch"
+    epoch="$(jq -r '.limits["model:offset-fractional"].resets_epoch' "$HOOK_STATE_FILE")"
+    assert_eq "$desc: дробная часть смещения отброшена" "$expect_off_plus" "$epoch"
+    epoch="$(jq -r '.limits["model:numeric-epoch"].resets_epoch' "$HOOK_STATE_FILE")"
+    assert_eq "$desc: resets_at числом" "1788739200" "$epoch"
+}
+
+test_model_scoped_slug_collision_first_wins() {
+    local desc="model_scoped: коллизия слагов — побеждает первое вхождение"
+    run_hook "$(fixture model_scoped_slug_collision.json)"
+    assert_common "$desc"
+    assert_stdout "$desc" "Fable ▓░░░░░░░ 10%"
+    assert_state_file "$desc" '{
+        "schema": 1,
+        "limits": {"model:fable": {"percent": 10.0, "label": "Fable"}},
+        "order": ["model:fable"]
+    }'
+}
+
+test_model_scoped_label_middle_dot_removed() {
+    local desc="model_scoped: · в label убирается, чтобы не разломать разделитель статус-строки"
+    run_hook "$(fixture model_scoped_label_middle_dot.json)"
+    assert_common "$desc"
+    assert_stdout "$desc" "FableBeta ▓▓▓░░░░░ 33%"
+    assert_state_file "$desc" '{
+        "schema": 1,
+        "limits": {"model:fablebeta": {"percent": 33.0, "label": "FableBeta"}},
+        "order": ["model:fablebeta"]
+    }'
+}
+
+test_model_scoped_label_control_chars_collapsed() {
+    local desc="model_scoped: управляющие символы становятся пробелом, пробелы схлопнуты и обрезаны по краям"
+    run_hook "$(fixture model_scoped_label_control_chars.json)"
+    assert_common "$desc"
+    assert_stdout "$desc" "Fable Beta Gamma ▓▓▓▓░░░░ 44%"
+    local label
+    label="$(jq -r '.limits["model:--fablebeta---gamma--"].label' "$HOOK_STATE_FILE")"
+    assert_eq "$desc: label" "Fable Beta Gamma" "$label"
+}
+
+test_model_scoped_label_empty_after_sanitization_skipped() {
+    local desc="model_scoped: label, пустой после санации, — окно пропускается целиком"
+    run_hook "$(jq -n '{rate_limits: {model_scoped: [{display_name: "\n\t·  ", utilization: 44.0, resets_at: null}]}}')"
+    assert_common "$desc"
+    assert_stdout "$desc" "Claude: нет данных"
+    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+}
+
 # ---------------------------------------------------------------------------
 # extra_usage
 # ---------------------------------------------------------------------------
@@ -334,6 +412,50 @@ run_boundary_tests() {
 }
 
 # ---------------------------------------------------------------------------
+# state_path(): ветки без CLAUDE_USAGE_STATE
+# ---------------------------------------------------------------------------
+
+# Прогоняет хук в полностью очищенном окружении (env -i) с явным cwd — только
+# так проверяются ветки state_path(), не завязанные на CLAUDE_USAGE_STATE.
+run_hook_env() {
+    local input="$1" cwd="$2"; shift 2
+    HOOK_STDOUT="$(cd "$cwd" && printf '%s' "$input" | env -i PATH="$PATH" "$@" "$HOOK" 2>"$cwd/stderr")"
+    HOOK_EXIT=$?
+    HOOK_STDERR="$(cat "$cwd/stderr")"
+}
+
+test_state_path_xdg_state_home() {
+    local desc="state_path: ветка XDG_STATE_HOME"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" "XDG_STATE_HOME=$tmp/xdg"
+    assert_common "$desc"
+    assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
+    if [[ -f "$tmp/xdg/claude-usage/latest.json" ]]; then pass
+    else fail "$desc: файл состояния не создан по XDG_STATE_HOME"; fi
+}
+
+test_state_path_default_home() {
+    local desc="state_path: дефолт \$HOME/.local/state"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" "HOME=$tmp/home"
+    assert_common "$desc"
+    assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
+    if [[ -f "$tmp/home/.local/state/claude-usage/latest.json" ]]; then pass
+    else fail "$desc: файл состояния не создан по умолчанию \$HOME/.local/state"; fi
+}
+
+test_state_path_home_and_xdg_unset() {
+    local desc="state_path: HOME и XDG_STATE_HOME не заданы — запись пропускается"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp"
+    assert_common "$desc"
+    assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
+    local leftover
+    leftover="$(find "$tmp" -mindepth 1 -type f ! -name stderr | wc -l)"
+    assert_eq "$desc: посторонних файлов в cwd не появилось" "0" "$leftover"
+}
+
+# ---------------------------------------------------------------------------
 # Атомарность: временных файлов не остаётся
 # ---------------------------------------------------------------------------
 test_no_leftover_tmp_files() {
@@ -360,11 +482,20 @@ main() {
     test_model_scoped_empty_display_name_skipped
     test_model_scoped_unparsable_resets_at
     test_display_name_sanitization
+    test_model_scoped_non_object_item_skipped
+    test_model_scoped_iso8601_forms
+    test_model_scoped_slug_collision_first_wins
+    test_model_scoped_label_middle_dot_removed
+    test_model_scoped_label_control_chars_collapsed
+    test_model_scoped_label_empty_after_sanitization_skipped
     test_extra_usage_present
     test_extra_usage_absent
     test_extra_usage_null_utilization_treated_as_absent
     test_order_without_seven_day
     run_boundary_tests
+    test_state_path_xdg_state_home
+    test_state_path_default_home
+    test_state_path_home_and_xdg_unset
     test_no_leftover_tmp_files
 
     echo "---"

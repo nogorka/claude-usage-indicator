@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-model-collision",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Fable", "utilization": 10.0, "resets_at": null},
+      {"display_name": "fable", "utilization": 90.0, "resets_at": null}
+    ]
+  }
+}

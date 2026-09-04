@@ -1,0 +1,7 @@
+{
+  "session_id": "sess-model-non-object",
+  "rate_limits": {
+    "five_hour": {"used_percentage": 42.3, "resets_at": 1788550200},
+    "model_scoped": ["oops"]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-model-label-dot",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Fable·Beta", "utilization": 33.0, "resets_at": null}
+    ]
+  }
+}
