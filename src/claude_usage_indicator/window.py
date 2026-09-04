@@ -6,7 +6,9 @@ state.read_state(), не заглядывает во внутренности In
 """
 from __future__ import annotations
 
+import sys
 import time
+import traceback
 
 import gi
 
@@ -26,7 +28,10 @@ _window: Gtk.Window | None = None
 
 
 def show_details_window() -> None:
-    """Показывает окно деталей: поднимает существующее или создаёт новое."""
+    """Показывает окно деталей: поднимает существующее, создаёт новое, либо, если начальное
+    содержимое не собралось (битый файл состояния), не показывает ничего — пустое окно без
+    таймера обновления хуже, чем отсутствие окна до следующего клика.
+    """
     global _window
     if _window is not None:
         _window.present()
@@ -35,8 +40,10 @@ def show_details_window() -> None:
     win.set_default_size(420, 320)
     win.set_border_width(12)
     win.connect("destroy", _on_destroy)
+    if not _safe_refresh_content(win):
+        win.destroy()
+        return
     _window = win
-    _refresh_content(win)
     GLib.timeout_add_seconds(_POLL_INTERVAL_S, lambda: _on_timeout(win))
     win.show_all()
 
@@ -49,19 +56,34 @@ def _on_destroy(_widget: Gtk.Window) -> None:
 def _on_timeout(win: Gtk.Window) -> bool:
     if _window is not win:
         return False  # окно уже закрыто (и не факт, что не открыто заново) — этот таймер отслужил
-    _refresh_content(win)
+    _safe_refresh_content(win)
+    return True
+
+
+def _safe_refresh_content(win: Gtk.Window) -> bool:
+    """Ошибка сборки не должна ронять таймер обновления окна."""
+    try:
+        _refresh_content(win)
+    except Exception:
+        print("claude-usage-indicator: ошибка сборки окна деталей, содержимое не обновлено:", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return False
     return True
 
 
 def _refresh_content(win: Gtk.Window) -> None:
-    """Пересобирает содержимое целиком — набор окон (model:*) между тиками не фиксирован."""
+    """Пересобирает содержимое целиком — набор окон (model:*) между тиками не фиксирован.
+
+    Новый Box строится до того, как убирается старый: если сборка бросит исключение,
+    окно останется с прежним содержимым, а не опустеет.
+    """
+    snapshot = state.read_state()
+    now = time.time()
+    content = _build_content(snapshot, now)
     old_child = win.get_child()
     if old_child is not None:
         win.remove(old_child)
         old_child.destroy()
-    snapshot = state.read_state()
-    now = time.time()
-    content = _build_content(snapshot, now)
     win.add(content)
     content.show_all()
 
