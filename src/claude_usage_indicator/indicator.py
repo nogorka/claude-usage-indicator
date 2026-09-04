@@ -20,7 +20,7 @@ gi.require_version("AyatanaAppIndicator3", "0.1")
 from gi.repository import GLib, Gtk
 from gi.repository import AyatanaAppIndicator3 as AppIndicator3
 
-from . import bar, state
+from . import bar, state, window
 
 _APP_ID = "claude-usage-indicator"
 _ICON_NORMAL = "utilities-system-monitor"
@@ -68,8 +68,8 @@ def set_autostart(enabled: bool) -> None:
 
 
 def on_details() -> None:
-    """Заглушка: окно «Подробнее» пока не реализовано."""
-    return None
+    """Открывает окно «Подробнее» с барами по каждому лимиту."""
+    window.show_details_window()
 
 
 class Indicator:
