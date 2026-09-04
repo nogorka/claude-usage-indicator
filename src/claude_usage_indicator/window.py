@@ -62,6 +62,9 @@ def _on_timeout(win: Gtk.Window) -> bool:
     # висеть с застывшим содержимым: пустое окно без таймера — тот же
     # инвариант, что и в show_details_window при первом открытии (см. её
     # докстринг). destroy() сам сбросит _window через _on_destroy.
+    # Подавление ниже — ложное срабатывание: mypy сужает win по "is"-сравнению
+    # с _window (Gtk.Window | None, оба типа Any из-за нестабленного gi) и
+    # протаскивает None в тип win, хотя сюда всегда приходит живое окно.
     win.destroy()  # type: ignore[union-attr]
     return False
 
