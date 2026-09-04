@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-no-extra-usage",
+  "rate_limits": {
+    "five_hour": {"used_percentage": 42.3, "resets_at": 1788550200}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-model-bad-date",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Fable", "utilization": 10.0, "resets_at": "not-a-date"}
+    ]
+  }
+}

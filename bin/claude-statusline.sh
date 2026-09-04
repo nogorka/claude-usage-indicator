@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+# Хук statusLine для Claude Code.
+#
+# Читает JSON сессии со stdin, вытаскивает rate_limits (схема реального
+# бандла Claude Code, не путать со старым мокапом: used_percentage у
+# фиксированных окон, utilization у model_scoped, resets_at — epoch у
+# фиксированных окон и ISO-8601 у model_scoped), атомарно обновляет файл
+# состояния для демона-индикатора и печатает статус-строку панели.
+#
+# Контракт устойчивости: Claude Code показывает stdout хука пользователю
+# как есть, поэтому на любом входе — валидном или нет — скрипт обязан
+# завершиться кодом 0 и не написать ни байта в stderr.
+set -euo pipefail
+
+# jq-фильтр: вся разборка rate_limits и рендер бара — в одном месте, чтобы
+# bash-часть занималась только вводом/выводом и атомарной записью.
+# Одинарные кавычки снаружи (см. вызов ниже) — внутри полно "$..." для
+# переменных jq, которые не должны трогаться подстановкой bash.
+JQ_FILTER="$(cat <<'JQ_EOF'
+def clamp_filled(f): if f < 0 then 0 elif f > 8 then 8 else f end;
+# jq умножает строку на 0 в null, а не в "" — без этой обёртки бар из
+# нулевой заполненности/пустоты ломался бы на границах 0% и 100%.
+def rep(s; n): if n <= 0 then "" else s * n end;
+def bar(percent):
+  (clamp_filled((((percent / 100) * 8) + 0.5) | floor)) as $filled
+  | rep("▓"; $filled) + rep("░"; 8 - $filled);
+def rounded(percent): (percent + 0.5) | floor;
+
+# Смещение UTC из хвоста ISO-строки: "Z" или ±HH:MM/±HHMM. Возвращает секунды
+# со знаком; null на любом сбое разбора. capture() без совпадения — это jq
+# empty (не ошибка), поэтому ловим через "// null", а не try/catch: иначе
+# try пропускает empty насквозь и весь элемент model_scoped исчезает молча.
+def offset_seconds(off):
+  if off == "Z" then 0
+  else
+    # hh/mm ограничены реальным диапазоном часового пояса (00-23:00-59) —
+    # без этого "+99:99" проходил бы как валидное смещение.
+    ((off | capture("^(?<sign>[+-])(?<hh>[01][0-9]|2[0-3]):?(?<mm>[0-5][0-9])$")?) // null) as $o
+    | if $o == null then null
+      else
+        (($o.hh | tonumber) * 3600 + ($o.mm | tonumber) * 60)
+        * (if $o.sign == "-" then -1 else 1 end)
+      end
+  end;
+
+# resets_at у model_scoped — ISO-8601 строка (Date.toISOString(), то есть
+# всегда с миллисекундами) либо, по спецификации, число-эпоха напрямую.
+# jq 1.7 fromdateiso8601 понимает только "...Z" без дробных секунд и без
+# смещения — нормализуем сами: дробную часть отбрасываем, наивную часть
+# парсим как UTC, вычитаем смещение. Что не разобралось — null, без ошибок.
+def parse_iso_epoch(v):
+  if (v | type) == "number" then (v | floor)
+  elif (v | type) != "string" then null
+  else
+    ((v | capture(
+        "^(?<naive>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(\\.[0-9]+)?(?<off>Z|[+-][0-9]{2}:?[0-9]{2})$"
+      )?) // null) as $m
+    | if $m == null then null
+      else
+        (try ($m.naive + "Z" | fromdateiso8601) catch null) as $naive_epoch
+        # fromdateiso8601 не проверяет календарь — "2026-02-30" молча
+        # нормализуется в 2026-03-02 вместо ошибки. Круговой прогон через
+        # обратную todateiso8601 ловит это: невалидная дата не воспроизведёт
+        # исходную строку.
+        | if $naive_epoch == null or (($naive_epoch | todateiso8601) != ($m.naive + "Z"))
+          then null
+          else (offset_seconds($m.off)) as $off_secs
+               | if $off_secs == null then null else $naive_epoch - $off_secs end
+          end
+      end
+  end;
+
+# Ключ-слаг из display_name для model:<slug>: нижний регистр, пробелы в дефис,
+# всё лишнее выбрасывается.
+def slug(name):
+  (name | ascii_downcase | gsub(" "; "-")) as $lowered
+  | ($lowered | gsub("[^a-z0-9._-]"; ""));
+
+# label идёт в статус-строку и файл состояния как есть — управляющие символы
+# (перевод строки в т.ч.) и разделитель "·" её бы разломали, поэтому санируется
+# при записи, а не полагается на источник.
+# Управляющий символ схлопывается в пробел (это разделитель слов, не мусор:
+# без замены "Fable\nBeta" превратилось бы в слипшееся "FableBeta"), а "·"
+# убирается совсем — это не разделитель слов, а знак, который нельзя спутать
+# с разделителем самой статус-строки.
+def sanitize_label(name):
+  (name | gsub("[\\x00-\\x1f\\x7f]"; " ") | gsub("·"; "")) as $stripped
+  | ($stripped | gsub(" +"; " ")) as $collapsed
+  | ($collapsed | sub("^ +"; "") | sub(" +$"; ""));
+
+# Фиксированное окно (five_hour|seven_day): resets_at уже epoch-секунды.
+def fixed_window(w):
+  if (w | type) == "object" and ((w.used_percentage) | type) == "number"
+  then { percent: w.used_percentage }
+       + (if (w.resets_at | type) == "number"
+          then {resets_epoch: (w.resets_at | floor)} else {} end)
+  else null
+  end;
+
+# Элемент model_scoped: не-объект в массиве (мусор с сервера) пропускается
+# так же, как невалидное фиксированное окно — не роняя разбор остального.
+# utilization:null или пустой/отсутствующий display_name — окно целиком
+# пропускается (не ошибка, а «его не было»). Пустой после санации label —
+# тоже пропуск: печатать нечего.
+def model_entry(item):
+  if (item | type) != "object" then null
+  else
+    (item.display_name) as $name
+    | (item.utilization) as $util
+    | if ($name | type) == "string" and ($name | length) > 0
+         and ($util | type) == "number"
+      then
+        (sanitize_label($name)) as $label
+        | if ($label | length) == 0 then null
+          else
+            (slug($name)) as $key
+            | (parse_iso_epoch(item.resets_at)) as $epoch
+            | { key: ("model:" + $key), label: $label, percent: $util }
+              + (if $epoch != null then {resets_epoch: ($epoch | floor)} else {} end)
+          end
+      else null
+      end
+  end;
+
+def label_of(key; limits):
+  if key == "five_hour" then "5h"
+  elif key == "seven_day" then "7d"
+  else limits[key].label
+  end;
+
+# Дедуп по ключу-слагу: два display_name, дающие один слаг, иначе давали бы
+# дубль и в limits (reduce молча берёт последний), и в order (панель печатала
+# бы один сегмент дважды). Побеждает первое вхождение.
+def dedup_by_key:
+  reduce .[] as $it ([]; if any(.[]; .key == $it.key) then . else . + [$it] end);
+
+. as $input
+| ($input | if type == "object" then (.rate_limits // null) else null end) as $rl0
+| ($rl0 | if type == "object" then . else {} end) as $rl
+
+| fixed_window($rl.five_hour) as $five
+| fixed_window($rl.seven_day) as $seven
+
+| ($rl.model_scoped | if type == "array" then . else [] end) as $ms_list
+| ([$ms_list[] | model_entry(.) | select(. != null)] | dedup_by_key) as $models
+
+| ({}
+   + (if $five  != null then {five_hour: $five} else {} end)
+   + (if $seven != null then {seven_day: $seven} else {} end)
+   + (reduce $models[] as $m
+       ({}; . + {($m.key): ({percent: $m.percent, label: $m.label}
+                             + (if $m.resets_epoch then {resets_epoch: $m.resets_epoch} else {} end))})
+     )
+  ) as $limits
+
+| ((if $five  != null then ["five_hour"] else [] end)
+   + (if $seven != null then ["seven_day"] else [] end)
+   + [$models[] | .key]
+  ) as $order
+
+| ($rl.extra_usage | if type == "object" then . else {} end) as $eu
+| (if (($eu.utilization) | type) == "number"
+   then {percent: $eu.utilization}
+        + (if ($eu.used_credits  | type) == "number" then {used_credits:  $eu.used_credits}  else {} end)
+        + (if ($eu.monthly_limit | type) == "number" then {monthly_limit: $eu.monthly_limit} else {} end)
+        + (if ($eu.currency      | type) == "string" then {currency:      $eu.currency}      else {} end)
+   else null
+   end) as $extra_usage
+
+| ([$order[] as $k
+    | "\(label_of($k; $limits)) \(bar($limits[$k].percent)) \(rounded($limits[$k].percent))%"
+   ]) as $segments
+| (if ($segments | length) == 0 then "Claude: нет данных" else ($segments | join(" · ")) end) as $status_line
+
+| {limits: $limits, order: $order, status_line: $status_line}
+  + (if $extra_usage != null then {extra_usage: $extra_usage} else {} end)
+JQ_EOF
+)"
+
+# Путь файла состояния: CLAUDE_USAGE_STATE (тестируемость) важнее XDG-пути.
+# $HOME читаем через "${HOME:-}" — под set -u голый $HOME на окружении без
+# HOME (напр. cron) уронет разбор параметра с текстом в stderr раньше, чем
+# сработает любая обёртка "|| true" в вызывающем коде. Если не задан и
+# XDG_STATE_HOME, и HOME — печатаем пустую строку: писать состояние всё
+# равно некуда, write_state() эту пустоту ниже явно пропускает.
+state_path() {
+    if [[ -n "${CLAUDE_USAGE_STATE:-}" ]]; then
+        printf '%s' "$CLAUDE_USAGE_STATE"
+        return
+    fi
+    if [[ -n "${XDG_STATE_HOME:-}" ]]; then
+        printf '%s/claude-usage/latest.json' "$XDG_STATE_HOME"
+        return
+    fi
+    if [[ -n "${HOME:-}" ]]; then
+        printf '%s/.local/state/claude-usage/latest.json' "$HOME"
+        return
+    fi
+}
+
+# Атомарная запись: mktemp в целевом каталоге (гарантия одной ФС с mv),
+# 0600 выставляется до переименования, mv -f поверх старого файла.
+write_state() {
+    local content="$1"
+    local path dir tmp
+    path="$(state_path)"
+    if [[ -z "$path" ]]; then
+        return 0
+    fi
+    dir="$(dirname -- "$path")"
+    mkdir -p -m 0700 "$dir" 2>/dev/null || return 1
+    tmp="$(mktemp "$dir/latest.json.XXXXXX" 2>/dev/null)" || return 1
+    chmod 0600 "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+    printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+    mv -f "$tmp" "$path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+}
+
+main() {
+    local raw
+    raw="$(cat)" || raw=""
+
+    # Полностью нечитаемый вход (пустой stdin) — файл состояния не трогаем,
+    # печатаем пустую строку молча: контракт хука требует кода 0 и тишины
+    # в stderr на любом входе, а не только на валидном JSON с лимитами.
+    if [[ -z "$raw" ]]; then
+        exit 0
+    fi
+
+    # jq на пустом/из-одних-пробелов вводе тихо возвращает "" с кодом 0
+    # (ноль JSON-значений в потоке — ноль применений фильтра), поэтому
+    # синтаксической проверкой `jq empty` тут не обойтись: нужен ещё и
+    # непустой результат основного фильтра.
+    local result
+    result="$(printf '%s' "$raw" | jq -c "$JQ_FILTER" 2>/dev/null)" || result=""
+    if [[ -z "$result" ]]; then
+        exit 0
+    fi
+
+    # Все три jq-вызова здесь защищены одинаково (2>/dev/null + || var=""):
+    # под set -euo pipefail несловленный сбой любого из них уронит скрипт
+    # или потянет текст ошибки в stderr, а контракт хука это запрещает
+    # даже на входах, которые сегодня не могут сюда так сломаться.
+    local status_line
+    status_line="$(printf '%s' "$result" | jq -r '.status_line' 2>/dev/null)" || status_line=""
+
+    local state_json
+    state_json="$(printf '%s' "$result" | jq -c --argjson epoch "$(date +%s)" '
+        {schema: 1, updated_epoch: $epoch, limits: .limits, order: .order}
+        + (if has("extra_usage") then {extra_usage: .extra_usage} else {} end)
+    ' 2>/dev/null)" || state_json=""
+
+    # Запись состояния не должна ронять печать статус-строки — это
+    # единственный вывод, который Claude Code реально показывает.
+    if [[ -n "$state_json" ]]; then
+        write_state "$state_json" || true
+    fi
+
+    printf '%s\n' "$status_line"
+}
+
+main

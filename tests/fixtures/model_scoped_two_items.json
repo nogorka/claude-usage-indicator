@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-model-scoped",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Fable", "utilization": 21.0, "resets_at": "2026-09-06T09:00:00Z"},
+      {"display_name": "Opus 4.5", "utilization": 55.5, "resets_at": "2026-09-07T00:00:00Z"}
+    ]
+  }
+}

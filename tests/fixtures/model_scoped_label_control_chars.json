@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-model-label-ctrl",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "  Fable\n\tBeta   Gamma  ", "utilization": 44.0, "resets_at": null}
+    ]
+  }
+}

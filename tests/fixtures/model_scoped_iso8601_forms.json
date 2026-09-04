@@ -1,0 +1,15 @@
+{
+  "session_id": "sess-iso-forms",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Z Bare", "utilization": 10.0, "resets_at": "2026-09-07T00:00:00Z"},
+      {"display_name": "Z Millis", "utilization": 11.0, "resets_at": "2026-09-07T00:00:00.000Z"},
+      {"display_name": "Z Micros", "utilization": 12.0, "resets_at": "2026-09-07T00:00:00.123456Z"},
+      {"display_name": "Offset Plus Colon", "utilization": 13.0, "resets_at": "2026-09-07T00:00:00+03:00"},
+      {"display_name": "Offset Minus Colon", "utilization": 14.0, "resets_at": "2026-09-07T00:00:00-05:00"},
+      {"display_name": "Offset Plus Nocolon", "utilization": 15.0, "resets_at": "2026-09-07T00:00:00+0300"},
+      {"display_name": "Offset Fractional", "utilization": 16.0, "resets_at": "2026-09-07T00:00:00.123+03:00"},
+      {"display_name": "Numeric Epoch", "utilization": 17.0, "resets_at": 1788739200}
+    ]
+  }
+}
