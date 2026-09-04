@@ -15,23 +15,29 @@
     }
 
 `read_state` никогда не бросает исключение: любая структурная проблема (файл
-отсутствует, пуст, битый JSON, чужая схема, нет `limits`) превращается в
-Snapshot с заполненным `problem`. Мусор внутри отдельного окна или в
-`extra_usage` не портит остальной снимок — то, что не удалось разобрать,
-просто выбрасывается.
+отсутствует, битые байты не в UTF-8, пуст, битый JSON, чужая схема, нет
+`limits`) превращается в Snapshot с заполненным `problem`. Мусор внутри
+отдельного окна или в `extra_usage` не портит остальной снимок — то, что не
+удалось разобрать (включая NaN/Infinity в percent и запредельный
+resets_epoch), просто выбрасывается.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 FIVE_HOUR = "five_hour"
 SEVEN_DAY = "seven_day"
 _MODEL_PREFIX = "model:"
 _FIXED_LABELS = {FIVE_HOUR: "5 часов", SEVEN_DAY: "7 дней"}
+# Конец 9999 года — потолок, который выдерживает datetime.fromtimestamp/strftime
+# на всех платформах; за ним format_reset падает OSError/OverflowError (находка ревью #3).
+_MAX_RESETS_EPOCH = 253402300799
 
 
 @dataclass(frozen=True)
@@ -69,12 +75,19 @@ def state_path() -> Path:
 
 
 def _empty(problem: str) -> Snapshot:
-    return Snapshot(updated_epoch=None, windows={}, order=(), extra_usage=None, problem=problem)
+    return Snapshot(updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem=problem)
 
 
 def _is_plain_number(value: object) -> bool:
-    """bool — подкласс int в Python, поэтому его явно исключаем из числовых полей."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """bool — подкласс int, исключаем явно; NaN/±Infinity — валидный float, но роняет round_percent/render_bar ниже по потоку."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    return math.isfinite(value)
+
+
+def _is_valid_resets_epoch(value: object) -> bool:
+    """int в диапазоне [0, _MAX_RESETS_EPOCH]; всё остальное — как мусорное поле."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= _MAX_RESETS_EPOCH
 
 
 def _window_label(key: str, raw: Mapping) -> str | None:
@@ -100,7 +113,7 @@ def _parse_window(key: str, raw: object) -> Window | None:
     if not _is_plain_number(percent):
         return None
     resets_epoch = raw.get("resets_epoch")
-    if resets_epoch is not None and not (isinstance(resets_epoch, int) and not isinstance(resets_epoch, bool)):
+    if resets_epoch is not None and not _is_valid_resets_epoch(resets_epoch):
         return None
     label = _window_label(key, raw)
     if label is None:
@@ -177,6 +190,9 @@ def read_state(path: Path | None = None) -> Snapshot:
         raw_text = target.read_text(encoding="utf-8")
     except FileNotFoundError:
         return _empty("no_file")
+    except UnicodeDecodeError:
+        # Подкласс ValueError, а не OSError — падает мимо ловли ниже, если её пропустить.
+        return _empty("bad_encoding")
     except OSError:
         # Права, битый симлинк, каталог вместо файла — любая другая I/O-ошибка.
         return _empty("read_error")
@@ -199,7 +215,7 @@ def read_state(path: Path | None = None) -> Snapshot:
     windows = _parse_windows(data["limits"])
     return Snapshot(
         updated_epoch=_optional_int(data.get("updated_epoch")),
-        windows=windows,
+        windows=MappingProxyType(windows),
         order=tuple(_resolve_order(data.get("order"), windows)),
         extra_usage=_parse_extra_usage(data.get("extra_usage")),
         problem=None,

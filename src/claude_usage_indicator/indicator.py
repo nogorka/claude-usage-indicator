@@ -6,7 +6,10 @@ bar.py/state.py: вся логика, которую можно протести
 """
 from __future__ import annotations
 
+import sys
 import time
+import traceback
+from types import MappingProxyType
 
 import gi
 
@@ -22,8 +25,11 @@ _APP_ID = "claude-usage-indicator"
 _ICON_NORMAL = "utilities-system-monitor"
 _ICON_ALARM = "dialog-warning"
 _POLL_INTERVAL_S = 10
-_ATTENTION_PREFIX = "⚠ "
-_STALE_SUFFIX = " (устарело)"
+# Снимок для честного «нет данных», когда рендер реального снимка упал (находка ревью #3):
+# panel_label на пустых windows/order гарантированно не бросает — сам по себе fallback безопасен.
+_RENDER_FAILED_SNAPSHOT = state.Snapshot(
+    updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem="read_error"
+)
 
 
 def autostart_enabled() -> bool:
@@ -62,25 +68,45 @@ class Indicator:
         return True  # GLib держит таймер, пока колбэк возвращает True
 
     def refresh(self) -> None:
-        """Перечитывает файл состояния; перерисовывает панель только при реальном изменении."""
-        snapshot = state.read_state()
-        if snapshot == self._last_snapshot:
-            return
-        self._last_snapshot = snapshot
-        self._apply(snapshot)
+        """Перечитывает файл состояния каждый тик; меню пересобирает только при смене снимка.
 
-    def _apply(self, snapshot: state.Snapshot) -> None:
+        Метка и статус тревоги — функции текущего времени (is_stale/panel_state),
+        поэтому красятся на каждый тик независимо от того, поменялся ли снимок:
+        иначе закрытый Claude Code (файл больше не пишется, снимок равен
+        самому себе) никогда не показал бы «(устарело)» (находка ревью #2).
+        """
+        snapshot = state.read_state()
+        rebuild_menu = snapshot != self._last_snapshot
+        self._last_snapshot = snapshot
+        self._apply(snapshot, rebuild_menu)
+
+    def _apply(self, snapshot: state.Snapshot, rebuild_menu: bool) -> None:
         now = time.time()
-        alarm = bar.is_alarm(snapshot)
-        label = bar.panel_label(snapshot)
-        if alarm:
-            label = _ATTENTION_PREFIX + label
-        if bar.is_stale(snapshot, now):
-            label += _STALE_SUFFIX
+        label, alarm = self._safe_panel_state(snapshot, now)
         self._indicator.set_label(label, "")
         status = AppIndicator3.IndicatorStatus.ATTENTION if alarm else AppIndicator3.IndicatorStatus.ACTIVE
         self._indicator.set_status(status)
-        self._indicator.set_menu(_build_menu(snapshot, now))
+        if rebuild_menu:
+            self._safe_set_menu(snapshot, now)
+
+    def _safe_panel_state(self, snapshot: state.Snapshot, now: float) -> tuple[str, bool]:
+        """Рендер не должен убивать таймер опроса (находка ревью #3): падение — честное «нет данных»."""
+        try:
+            return bar.panel_state(snapshot, now)
+        except Exception:
+            print("claude-usage-indicator: ошибка рендера панели, показываю «нет данных»:", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            return bar.panel_state(_RENDER_FAILED_SNAPSHOT, now)
+
+    def _safe_set_menu(self, snapshot: state.Snapshot, now: float) -> None:
+        """Сборка меню — тоже вынесенный риск: одна плохая запись не должна остановить таймер."""
+        try:
+            menu = _build_menu(snapshot, now)
+        except Exception:
+            print("claude-usage-indicator: ошибка сборки меню, старое меню остаётся:", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            return
+        self._indicator.set_menu(menu)
 
 
 def _add_static_item(menu: Gtk.Menu, text: str) -> None:
@@ -100,6 +126,16 @@ def _append_window_section(menu: Gtk.Menu, window: state.Window, now: float) -> 
 def _append_extra_usage(menu: Gtk.Menu, extra: state.ExtraUsage) -> None:
     _add_static_item(menu, f"Доп. расход                {bar.round_percent(extra.percent)}%")
     menu.append(Gtk.SeparatorMenuItem())
+
+
+def _append_problem_hint(menu: Gtk.Menu, snapshot: state.Snapshot) -> None:
+    """Когда окон нет, объясняет почему: «ещё не спрашивали» и «файл битый» иначе неотличимы."""
+    if snapshot.windows:
+        return
+    text = bar.problem_text(snapshot.problem)
+    if text is not None:
+        _add_static_item(menu, text)
+        menu.append(Gtk.SeparatorMenuItem())
 
 
 def _append_age(menu: Gtk.Menu, snapshot: state.Snapshot, now: float) -> None:
@@ -127,6 +163,7 @@ def _build_menu(snapshot: state.Snapshot, now: float) -> Gtk.Menu:
     menu = Gtk.Menu()
     for key in snapshot.order:
         _append_window_section(menu, snapshot.windows[key], now)
+    _append_problem_hint(menu, snapshot)
     if snapshot.extra_usage is not None:
         _append_extra_usage(menu, snapshot.extra_usage)
     _append_age(menu, snapshot, now)

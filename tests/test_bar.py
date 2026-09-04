@@ -13,6 +13,8 @@ from claude_usage_indicator.bar import (
     is_stale,
     panel_key,
     panel_label,
+    panel_state,
+    problem_text,
     render_bar,
 )
 from claude_usage_indicator.state import Snapshot, Window
@@ -155,6 +157,38 @@ class IsStaleTests(unittest.TestCase):
         self.assertTrue(is_stale(snapshot, now_epoch=1_000_000))
 
 
+class PanelStateTests(unittest.TestCase):
+    """panel_state пересчитывает метку и тревогу от now_epoch — чинит вечно-свежий статус (находка #2).
+
+    _apply() в indicator.py перерисовывает метку каждый тик таймера, а не только
+    когда файл состояния реально изменился: один и тот же снимок обязан
+    становиться «(устарело)» по мере течения времени, без нового чтения файла.
+    """
+
+    def test_same_snapshot_turns_stale_as_time_passes_without_new_read(self) -> None:
+        windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 часов")}
+        snapshot = _snapshot(windows, ("five_hour",), updated_epoch=1000)
+        label_fresh, alarm_fresh = panel_state(snapshot, now_epoch=1000)
+        label_stale, alarm_stale = panel_state(snapshot, now_epoch=1000 + 3601)
+        self.assertNotIn("устарело", label_fresh)
+        self.assertIn("устарело", label_stale)
+        self.assertFalse(alarm_fresh)
+        self.assertFalse(alarm_stale)
+
+    def test_alarm_adds_attention_prefix(self) -> None:
+        windows = {"five_hour": Window(percent=95.0, resets_epoch=None, label="5 часов")}
+        snapshot = _snapshot(windows, ("five_hour",), updated_epoch=1000)
+        label, alarm = panel_state(snapshot, now_epoch=1000)
+        self.assertTrue(alarm)
+        self.assertTrue(label.startswith("⚠ "))
+
+    def test_no_data_snapshot_reports_no_data_label(self) -> None:
+        snapshot = _snapshot({}, (), updated_epoch=None)
+        label, alarm = panel_state(snapshot, now_epoch=1_000_000)
+        self.assertEqual(label, "Claude: нет данных (устарело)")
+        self.assertFalse(alarm)
+
+
 class PluralRuTests(unittest.TestCase):
     """Согласование русских числительных: 1/2/5 — три разные формы."""
 
@@ -195,6 +229,10 @@ class FormatAgeTests(unittest.TestCase):
     def test_days_ago(self) -> None:
         self.assertEqual(format_age(0, now_epoch=5 * 86400), "5 дней назад")
 
+    def test_half_boundary_rounds_up_not_to_even(self) -> None:
+        """2.5 минуты: builtin round() банковски округлил бы вниз к 2 (чётное) — тут нужен round-half-up."""
+        self.assertEqual(format_age(0, now_epoch=150), "3 минуты назад")
+
 
 class _FixedTzMixin:
     """Фиксирует TZ=UTC на время теста, чтобы format_reset не зависел от машины исполнителя."""
@@ -228,6 +266,52 @@ class FormatResetTests(_FixedTzMixin, unittest.TestCase):
         reset_epoch = 10 * 3600
         now_epoch = reset_epoch + 60
         self.assertEqual(format_reset(reset_epoch, now_epoch), "сброс в 10:00")
+
+
+class ProblemTextTests(unittest.TestCase):
+    """Человеческие формулировки problem для меню (находка #6) — «нет данных» больше не одно на всё."""
+
+    _KNOWN_CODES = (
+        "no_file",
+        "read_error",
+        "empty_file",
+        "bad_json",
+        "bad_root",
+        "bad_schema",
+        "bad_encoding",
+        "no_limits",
+    )
+
+    def test_none_has_no_text(self) -> None:
+        """problem=None — валидный файл с пустыми limits, объяснять нечего."""
+        self.assertIsNone(problem_text(None))
+
+    def test_every_known_code_has_non_empty_human_text(self) -> None:
+        for code in self._KNOWN_CODES:
+            with self.subTest(code=code):
+                text = problem_text(code)
+                self.assertIsInstance(text, str)
+                self.assertTrue(text)
+
+    def test_no_limits_message_matches_brief_wording(self) -> None:
+        self.assertEqual(problem_text("no_limits"), "цифры появятся после первого запроса в Claude Code")
+
+    def test_no_file_message_matches_brief_wording(self) -> None:
+        self.assertEqual(
+            problem_text("no_file"),
+            "Claude Code ещё ни разу не запускался с установленным хуком",
+        )
+
+    def test_known_codes_have_distinct_messages(self) -> None:
+        """Иначе разные проблемы снова неотличимы друг от друга в меню — та же болезнь, что чинили."""
+        messages = {problem_text(code) for code in self._KNOWN_CODES}
+        self.assertEqual(len(messages), len(self._KNOWN_CODES))
+
+    def test_unknown_code_gets_generic_text_not_a_crash(self) -> None:
+        text = problem_text("some_future_hook_version_code")
+        self.assertIsInstance(text, str)
+        self.assertTrue(text)
+        self.assertNotIn(text, {problem_text(code) for code in self._KNOWN_CODES})
 
 
 if __name__ == "__main__":

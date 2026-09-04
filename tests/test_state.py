@@ -145,6 +145,27 @@ class ReadStateValidInputTests(unittest.TestCase):
         snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
         self.assertIsNone(snapshot.extra_usage)
 
+    def test_extra_usage_nan_percent_drops_whole_block(self) -> None:
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {},
+            "extra_usage": {"percent": float("nan")},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertIsNone(snapshot.extra_usage)
+
+    def test_windows_mapping_is_read_only(self) -> None:
+        """Snapshot.windows объявлен Mapping, но был обычным dict — владелец ссылки мог его портить."""
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": 10.0}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        with self.assertRaises(TypeError):
+            snapshot.windows["five_hour"] = None
+
 
 class ReadStateOrderTests(unittest.TestCase):
     """order задаёт порядок отображения; отсутствующий/битый — детерминированный дефолт."""
@@ -244,6 +265,18 @@ class ReadStateBrokenInputTests(unittest.TestCase):
         snapshot = read_state(self.dir_path)
         self._assert_empty_with_problem(snapshot, "read_error")
 
+    def test_invalid_utf8_bytes_is_bad_encoding_not_an_exception(self) -> None:
+        """UnicodeDecodeError — подкласс ValueError, а не OSError: без явной ловли read_state падал."""
+        target = self.dir_path / "latest.json"
+        target.write_bytes(b"\xff\xfe")
+        snapshot = read_state(target)
+        self._assert_empty_with_problem(snapshot, "bad_encoding")
+
+    def test_empty_windows_mapping_is_also_read_only(self) -> None:
+        snapshot = read_state(self.dir_path / "does-not-exist.json")
+        with self.assertRaises(TypeError):
+            snapshot.windows["five_hour"] = None
+
 
 class ReadStateWindowGarbageTests(unittest.TestCase):
     """Мусор в одном окне не должен портить остальные окна."""
@@ -330,6 +363,58 @@ class ReadStateWindowGarbageTests(unittest.TestCase):
         snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
         self.assertIsNone(snapshot.problem)
         self.assertEqual(snapshot.windows, {})
+
+    def test_percent_nan_is_dropped(self) -> None:
+        """json.loads по умолчанию разбирает NaN — round_percent на нём падает ValueError ниже по потоку."""
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": float("nan")}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertIsNone(snapshot.problem)
+        self.assertEqual(snapshot.windows, {})
+
+    def test_percent_infinity_is_dropped(self) -> None:
+        """render_bar на Infinity падает OverflowError ниже по потоку."""
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": float("inf")}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertEqual(snapshot.windows, {})
+
+    def test_resets_epoch_above_max_is_dropped(self) -> None:
+        """format_reset на 10**18 падает OSError: Value too large ниже по потоку."""
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": 10.0, "resets_epoch": 10**18}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertIsNone(snapshot.problem)
+        self.assertEqual(snapshot.windows, {})
+
+    def test_resets_epoch_negative_is_dropped(self) -> None:
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": 10.0, "resets_epoch": -1}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertEqual(snapshot.windows, {})
+
+    def test_resets_epoch_at_upper_bound_is_kept(self) -> None:
+        """253402300799 (конец 9999 года) — валидная граница, а не мусор."""
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": 10.0, "resets_epoch": 253402300799}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertIsNone(snapshot.problem)
+        self.assertEqual(snapshot.windows["five_hour"].resets_epoch, 253402300799)
 
 
 class StatePathTests(unittest.TestCase):
