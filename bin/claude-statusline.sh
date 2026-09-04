@@ -33,7 +33,9 @@ def rounded(percent): (percent + 0.5) | floor;
 def offset_seconds(off):
   if off == "Z" then 0
   else
-    ((off | capture("^(?<sign>[+-])(?<hh>[0-9]{2}):?(?<mm>[0-9]{2})$")?) // null) as $o
+    # hh/mm ограничены реальным диапазоном часового пояса (00-23:00-59) —
+    # без этого "+99:99" проходил бы как валидное смещение.
+    ((off | capture("^(?<sign>[+-])(?<hh>[01][0-9]|2[0-3]):?(?<mm>[0-5][0-9])$")?) // null) as $o
     | if $o == null then null
       else
         (($o.hh | tonumber) * 3600 + ($o.mm | tonumber) * 60)
@@ -56,7 +58,12 @@ def parse_iso_epoch(v):
     | if $m == null then null
       else
         (try ($m.naive + "Z" | fromdateiso8601) catch null) as $naive_epoch
-        | if $naive_epoch == null then null
+        # fromdateiso8601 не проверяет календарь — "2026-02-30" молча
+        # нормализуется в 2026-03-02 вместо ошибки. Круговой прогон через
+        # обратную todateiso8601 ловит это: невалидная дата не воспроизведёт
+        # исходную строку.
+        | if $naive_epoch == null or (($naive_epoch | todateiso8601) != ($m.naive + "Z"))
+          then null
           else (offset_seconds($m.off)) as $off_secs
                | if $off_secs == null then null else $naive_epoch - $off_secs end
           end
@@ -201,11 +208,11 @@ write_state() {
         return 0
     fi
     dir="$(dirname -- "$path")"
-    mkdir -p -m 0700 "$dir"
-    tmp="$(mktemp "$dir/latest.json.XXXXXX")"
-    chmod 0600 "$tmp"
-    printf '%s' "$content" > "$tmp"
-    mv -f "$tmp" "$path"
+    mkdir -p -m 0700 "$dir" 2>/dev/null || return 1
+    tmp="$(mktemp "$dir/latest.json.XXXXXX" 2>/dev/null)" || return 1
+    chmod 0600 "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+    printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+    mv -f "$tmp" "$path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
 }
 
 main() {
