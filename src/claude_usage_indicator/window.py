@@ -56,9 +56,14 @@ def _on_destroy(_widget: Gtk.Window) -> None:
 def _on_timeout(win: Gtk.Window) -> bool:
     if _window is not win:
         return False  # окно уже закрыто (и не факт, что не открыто заново) — этот таймер отслужил
-    # Неудачное обновление тоже останавливает таймер: иначе битый/недоступный
-    # файл состояния даёт бесконечный спам в stderr каждые 10 секунд без отката.
-    return _safe_refresh_content(win)
+    if _safe_refresh_content(win):
+        return True
+    # Неудачное обновление закрывает окно вместо того, чтобы оставлять его
+    # висеть с застывшим содержимым: пустое окно без таймера — тот же
+    # инвариант, что и в show_details_window при первом открытии (см. её
+    # докстринг). destroy() сам сбросит _window через _on_destroy.
+    win.destroy()  # type: ignore[union-attr]
+    return False
 
 
 def _safe_refresh_content(win: Gtk.Window) -> bool:

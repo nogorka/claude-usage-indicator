@@ -91,6 +91,11 @@ class Indicator:
         self._indicator.set_icon_full(_ICON_NORMAL, "лимиты в норме")
         self._indicator.set_attention_icon_full(_ICON_ALARM, "лимит почти исчерпан")
         self._indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
+        # Кэш, а не запрос к systemctl на каждый тик: с пересборкой меню
+        # каждые 10 секунд (см. refresh) опрос systemd на каждый тик означал
+        # бы форк процесса раз в 10 секунд навсегда, включая простой демона.
+        # Обновляется по факту переключения пользователем — см. _on_autostart_toggled.
+        self._autostart_cached = autostart_enabled()
         self.refresh()
         GLib.timeout_add_seconds(_POLL_INTERVAL_S, self._on_timeout)
 
@@ -98,13 +103,16 @@ class Indicator:
         self.refresh()
         return True  # GLib держит таймер, пока колбэк возвращает True
 
+    def _on_autostart_toggled(self, enabled: bool) -> None:
+        set_autostart(enabled)
+        self._autostart_cached = enabled
+
     def refresh(self) -> None:
         """Перечитывает файл состояния и пересобирает панель с меню на каждый тик.
 
         Меню раньше пересобиралось только при смене снимка — но текст его
         пунктов (format_reset/format_age) зависит от текущего времени, а не
-        только от снимка, и застывал между сменами данных. Пересборка на
-        каждый тик — тот же подход, что уже используется в window.py.
+        только от снимка, и застывал между сменами данных.
         """
         snapshot = state.read_state()
         self._apply(snapshot)
@@ -129,7 +137,7 @@ class Indicator:
     def _safe_set_menu(self, snapshot: state.Snapshot, now: float) -> None:
         """Сборка меню — тоже вынесенный риск: одна плохая запись не должна остановить таймер."""
         try:
-            menu = _build_menu(snapshot, now)
+            menu = _build_menu(snapshot, now, self._autostart_cached, self._on_autostart_toggled)
         except Exception:
             print("claude-usage-indicator: ошибка сборки меню, старое меню остаётся:", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
@@ -173,10 +181,10 @@ def _append_age(menu: Gtk.Menu, snapshot: state.Snapshot, now: float) -> None:
         _add_static_item(menu, f"данные {bar.format_age(snapshot.updated_epoch, now)}")
 
 
-def _append_autostart_toggle(menu: Gtk.Menu) -> None:
+def _append_autostart_toggle(menu: Gtk.Menu, autostart_state: bool, on_toggled: Callable[[bool], None]) -> None:
     item = Gtk.CheckMenuItem(label="Запускать при входе в систему")
-    item.set_active(autostart_enabled())
-    item.connect("toggled", lambda checkbox: set_autostart(checkbox.get_active()))
+    item.set_active(autostart_state)
+    item.connect("toggled", lambda checkbox: on_toggled(checkbox.get_active()))
     menu.append(item)
 
 
@@ -186,8 +194,11 @@ def _append_action_item(menu: Gtk.Menu, text: str, on_activate: Callable[[], Non
     menu.append(item)
 
 
-def _build_menu(snapshot: state.Snapshot, now: float) -> Gtk.Menu:
-    """Меню собирается заново на каждое изменение снимка: набор окон (model:*) не фиксирован."""
+def _build_menu(
+    snapshot: state.Snapshot, now: float, autostart_state: bool, on_autostart_toggled: Callable[[bool], None]
+) -> Gtk.Menu:
+    """Меню собирается заново на каждый тик: набор окон (model:*) не фиксирован, и текст
+    части пунктов зависит от текущего времени (см. Indicator.refresh)."""
     menu = Gtk.Menu()
     for key in snapshot.order:
         _append_window_section(menu, snapshot.windows[key], now)
@@ -195,7 +206,7 @@ def _build_menu(snapshot: state.Snapshot, now: float) -> Gtk.Menu:
     if snapshot.extra_usage is not None:
         _append_extra_usage(menu, snapshot.extra_usage)
     _append_age(menu, snapshot, now)
-    _append_autostart_toggle(menu)
+    _append_autostart_toggle(menu, autostart_state, on_autostart_toggled)
     _append_action_item(menu, "Подробнее…", on_details)
     menu.append(Gtk.SeparatorMenuItem())
     _append_action_item(menu, "Выход", Gtk.main_quit)
