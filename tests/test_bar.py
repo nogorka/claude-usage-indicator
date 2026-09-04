@@ -17,7 +17,7 @@ from claude_usage_indicator.bar import (
     problem_text,
     render_bar,
 )
-from claude_usage_indicator.state import Snapshot, Window
+from claude_usage_indicator.state import _MAX_RESETS_EPOCH, Snapshot, Window
 
 
 def _snapshot(windows: dict, order: tuple, updated_epoch=1_000_000, problem=None) -> Snapshot:
@@ -266,6 +266,28 @@ class FormatResetTests(_FixedTzMixin, unittest.TestCase):
         reset_epoch = 10 * 3600
         now_epoch = reset_epoch + 60
         self.assertEqual(format_reset(reset_epoch, now_epoch), "сброс в 10:00")
+
+
+class FormatResetExtremeTzTests(unittest.TestCase):
+    """Проверяет запас _MAX_RESETS_EPOCH в самом восточном часовом поясе (UTC+14)."""
+
+    def setUp(self) -> None:
+        self._old_tz = os.environ.get("TZ")
+        os.environ["TZ"] = "Pacific/Kiritimati"
+        time.tzset()
+        self.addCleanup(self._restore_tz)
+
+    def _restore_tz(self) -> None:
+        if self._old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self._old_tz
+        time.tzset()
+
+    def test_upper_bound_does_not_overflow_past_datetime_max(self) -> None:
+        # astimezone() на UTC+14 у конца 9999 года без запаса роняет OverflowError —
+        # именно этот сценарий выловило повторное ревью фикса #3.
+        format_reset(_MAX_RESETS_EPOCH, now_epoch=0)
 
 
 class ProblemTextTests(unittest.TestCase):

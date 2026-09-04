@@ -406,15 +406,26 @@ class ReadStateWindowGarbageTests(unittest.TestCase):
         self.assertEqual(snapshot.windows, {})
 
     def test_resets_epoch_at_upper_bound_is_kept(self) -> None:
-        """253402300799 (конец 9999 года) — валидная граница, а не мусор."""
+        """Конец 9999 года минус запас на часовой пояс — валидная граница, а не мусор."""
+        upper_bound = 253402300799 - 14 * 3600
+        payload = {
+            "schema": 1,
+            "updated_epoch": 1,
+            "limits": {"five_hour": {"percent": 10.0, "resets_epoch": upper_bound}},
+        }
+        snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
+        self.assertIsNone(snapshot.problem)
+        self.assertEqual(snapshot.windows["five_hour"].resets_epoch, upper_bound)
+
+    def test_resets_epoch_past_upper_bound_is_dropped(self) -> None:
+        """Значение, которое ещё в пределах конца 9999 года, но без запаса на TZ — мусор."""
         payload = {
             "schema": 1,
             "updated_epoch": 1,
             "limits": {"five_hour": {"percent": 10.0, "resets_epoch": 253402300799}},
         }
         snapshot = read_state(_write(self.dir_path, json.dumps(payload)))
-        self.assertIsNone(snapshot.problem)
-        self.assertEqual(snapshot.windows["five_hour"].resets_epoch, 253402300799)
+        self.assertEqual(snapshot.windows, {})
 
 
 class StatePathTests(unittest.TestCase):

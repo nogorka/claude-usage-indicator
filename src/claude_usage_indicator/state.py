@@ -35,9 +35,11 @@ FIVE_HOUR = "five_hour"
 SEVEN_DAY = "seven_day"
 _MODEL_PREFIX = "model:"
 _FIXED_LABELS = {FIVE_HOUR: "5 часов", SEVEN_DAY: "7 дней"}
-# Конец 9999 года — потолок, который выдерживает datetime.fromtimestamp/strftime
-# на всех платформах; за ним format_reset падает OSError/OverflowError (находка ревью #3).
-_MAX_RESETS_EPOCH = 253402300799
+# Конец 9999 года в UTC минус запас в 14 часов (крайнее восточное смещение,
+# Кирибати) — format_reset() конвертирует в локальную зону машины через
+# astimezone(), и без запаса положительное смещение переносит результат за
+# datetime.max, роняя OverflowError (находка повторного ревью после #3).
+_MAX_RESETS_EPOCH = 253402300799 - 14 * 3600
 
 
 @dataclass(frozen=True)
