@@ -1,0 +1,21 @@
+# Шаблон юнита systemd --user. В git лежит шаблон, а не готовый юнит: путь
+# репозитория в PYTHONPATH абсолютный и известен только на месте установки,
+# поэтому install.sh подставляет плейсхолдер в переменной Environment ниже
+# и пишет результат в ~/.config/systemd/user/claude-usage-indicator.service —
+# так репозиторий можно переложить в другой каталог без правки юнита руками.
+[Unit]
+Description=Claude usage indicator — GNOME-панель лимитов Claude Code
+# graphical-session.target — таргет живого GUI-сеанса пользователя; без него
+# AppIndicator не находит шину indicator и падает на старте.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment=PYTHONPATH=@@PYTHONPATH@@
+ExecStart=/usr/bin/python3 -m claude_usage_indicator
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

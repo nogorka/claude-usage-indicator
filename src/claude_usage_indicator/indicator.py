@@ -6,6 +6,7 @@ bar.py/state.py: вся логика, которую можно протести
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 import traceback
@@ -25,6 +26,7 @@ _APP_ID = "claude-usage-indicator"
 _ICON_NORMAL = "utilities-system-monitor"
 _ICON_ALARM = "dialog-warning"
 _POLL_INTERVAL_S = 10
+_UNIT_NAME = "claude-usage-indicator.service"
 # Снимок для честного «нет данных», когда рендер реального снимка упал (находка ревью #3):
 # panel_label на пустых windows/order гарантированно не бросает — сам по себе fallback безопасен.
 _RENDER_FAILED_SNAPSHOT = state.Snapshot(
@@ -33,13 +35,36 @@ _RENDER_FAILED_SNAPSHOT = state.Snapshot(
 
 
 def autostart_enabled() -> bool:
-    """Заглушка: состояние автозапуска подключит Task 3."""
-    return False
+    """Включён ли автозапуск — статус юнита systemd --user (без sudo, без системных путей).
+
+    Юнит ставит install.sh в ~/.config/systemd/user. Любая ошибка вызова
+    (systemctl недоступен, юнит ещё не установлен) читается как «выключен» —
+    это не поломка демона, а нормальное состояние до первой установки.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", "--quiet", _UNIT_NAME],
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        print("claude-usage-indicator: не удалось проверить автозапуск (systemctl):", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return False
+    return result.returncode == 0
 
 
 def set_autostart(enabled: bool) -> None:
-    """Заглушка: запись состояния автозапуска на диск сделает Task 3."""
-    return None
+    """Переключает автозапуск через systemctl --user enable|disable.
+
+    Без --now: чекбокс в меню про будущие входы в систему, а не про то, жив
+    ли текущий процесс демона — гасить его этим действием не нужно.
+    """
+    action = "enable" if enabled else "disable"
+    try:
+        subprocess.run(["systemctl", "--user", action, "--quiet", _UNIT_NAME], timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        print(f"claude-usage-indicator: не удалось {action} автозапуск (systemctl):", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
 
 
 def on_details() -> None:
