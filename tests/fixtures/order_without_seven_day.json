@@ -1,0 +1,9 @@
+{
+  "session_id": "sess-order",
+  "rate_limits": {
+    "five_hour": {"used_percentage": 42.3, "resets_at": 1788550200},
+    "model_scoped": [
+      {"display_name": "Fable", "utilization": 21.0, "resets_at": "2026-09-06T09:00:00Z"}
+    ]
+  }
+}

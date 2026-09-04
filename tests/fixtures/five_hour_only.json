@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-5h",
+  "rate_limits": {
+    "five_hour": {"used_percentage": 20.0, "resets_at": 1700000000}
+  }
+}

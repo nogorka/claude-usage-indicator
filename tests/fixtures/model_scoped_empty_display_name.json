@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-model-empty-name",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "", "utilization": 40.0, "resets_at": "2026-09-06T09:00:00Z"}
+    ]
+  }
+}

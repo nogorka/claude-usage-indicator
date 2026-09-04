@@ -1,0 +1,13 @@
+{
+  "session_id": "sess-extra-usage",
+  "rate_limits": {
+    "five_hour": {"used_percentage": 42.3, "resets_at": 1788550200},
+    "extra_usage": {
+      "is_enabled": true,
+      "monthly_limit": 40.0,
+      "used_credits": 12.4,
+      "utilization": 31.0,
+      "currency": "USD"
+    }
+  }
+}

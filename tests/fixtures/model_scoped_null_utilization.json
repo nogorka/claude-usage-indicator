@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-model-null-util",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Fable", "utilization": null, "resets_at": "2026-09-06T09:00:00Z"}
+    ]
+  }
+}

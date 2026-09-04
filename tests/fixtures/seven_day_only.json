@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-7d",
+  "rate_limits": {
+    "seven_day": {"used_percentage": 63.0, "resets_at": 1700000500}
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-both",
+  "model": {"id": "claude-x"},
+  "rate_limits": {
+    "five_hour": {"used_percentage": 42.3, "resets_at": 1788550200},
+    "seven_day": {"used_percentage": 55.0, "resets_at": 1788700000}
+  }
+}

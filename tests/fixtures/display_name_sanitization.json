@@ -1,0 +1,8 @@
+{
+  "session_id": "sess-model-slug",
+  "rate_limits": {
+    "model_scoped": [
+      {"display_name": "Fable 5", "utilization": 50.0, "resets_at": null}
+    ]
+  }
+}
