@@ -11,6 +11,7 @@ import sys
 import time
 import traceback
 from types import MappingProxyType
+from typing import Callable
 
 import gi
 
@@ -61,10 +62,16 @@ def set_autostart(enabled: bool) -> None:
     """
     action = "enable" if enabled else "disable"
     try:
-        subprocess.run(["systemctl", "--user", action, "--quiet", _UNIT_NAME], timeout=5)
+        result = subprocess.run(["systemctl", "--user", action, "--quiet", _UNIT_NAME], timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         print(f"claude-usage-indicator: не удалось {action} автозапуск (systemctl):", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
+        return
+    if result.returncode != 0:
+        print(
+            f"claude-usage-indicator: systemctl {action} {_UNIT_NAME} завершился с кодом {result.returncode}",
+            file=sys.stderr,
+        )
 
 
 def on_details() -> None:
@@ -84,7 +91,6 @@ class Indicator:
         self._indicator.set_icon_full(_ICON_NORMAL, "лимиты в норме")
         self._indicator.set_attention_icon_full(_ICON_ALARM, "лимит почти исчерпан")
         self._indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-        self._last_snapshot: state.Snapshot | None = None
         self.refresh()
         GLib.timeout_add_seconds(_POLL_INTERVAL_S, self._on_timeout)
 
@@ -93,26 +99,23 @@ class Indicator:
         return True  # GLib держит таймер, пока колбэк возвращает True
 
     def refresh(self) -> None:
-        """Перечитывает файл состояния каждый тик; меню пересобирает только при смене снимка.
+        """Перечитывает файл состояния и пересобирает панель с меню на каждый тик.
 
-        Метка и статус тревоги — функции текущего времени (is_stale/panel_state),
-        поэтому красятся на каждый тик независимо от того, поменялся ли снимок:
-        иначе закрытый Claude Code (файл больше не пишется, снимок равен
-        самому себе) никогда не показал бы «(устарело)».
+        Меню раньше пересобиралось только при смене снимка — но текст его
+        пунктов (format_reset/format_age) зависит от текущего времени, а не
+        только от снимка, и застывал между сменами данных. Пересборка на
+        каждый тик — тот же подход, что уже используется в window.py.
         """
         snapshot = state.read_state()
-        rebuild_menu = snapshot != self._last_snapshot
-        self._last_snapshot = snapshot
-        self._apply(snapshot, rebuild_menu)
+        self._apply(snapshot)
 
-    def _apply(self, snapshot: state.Snapshot, rebuild_menu: bool) -> None:
+    def _apply(self, snapshot: state.Snapshot) -> None:
         now = time.time()
         label, alarm = self._safe_panel_state(snapshot, now)
         self._indicator.set_label(label, "")
         status = AppIndicator3.IndicatorStatus.ATTENTION if alarm else AppIndicator3.IndicatorStatus.ACTIVE
         self._indicator.set_status(status)
-        if rebuild_menu:
-            self._safe_set_menu(snapshot, now)
+        self._safe_set_menu(snapshot, now)
 
     def _safe_panel_state(self, snapshot: state.Snapshot, now: float) -> tuple[str, bool]:
         """Рендер не должен убивать таймер опроса: падение — честное «нет данных»."""
@@ -177,7 +180,7 @@ def _append_autostart_toggle(menu: Gtk.Menu) -> None:
     menu.append(item)
 
 
-def _append_action_item(menu: Gtk.Menu, text: str, on_activate) -> None:
+def _append_action_item(menu: Gtk.Menu, text: str, on_activate: Callable[[], None]) -> None:
     item = Gtk.MenuItem(label=text)
     item.connect("activate", lambda _item: on_activate())
     menu.append(item)

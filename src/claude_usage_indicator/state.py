@@ -30,6 +30,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
+from typing import TypeGuard
 
 FIVE_HOUR = "five_hour"
 SEVEN_DAY = "seven_day"
@@ -80,19 +81,24 @@ def _empty(problem: str) -> Snapshot:
     return Snapshot(updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem=problem)
 
 
-def _is_plain_number(value: object) -> bool:
+def _is_plain_number(value: object) -> TypeGuard[int | float]:
     """bool — подкласс int, исключаем явно; NaN/±Infinity — валидный float, но роняет round_percent/render_bar ниже по потоку."""
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return False
     return math.isfinite(value)
 
 
-def _is_valid_resets_epoch(value: object) -> bool:
-    """int в диапазоне [0, _MAX_RESETS_EPOCH]; всё остальное — как мусорное поле."""
+def _is_valid_epoch(value: object) -> TypeGuard[int]:
+    """int в диапазоне [0, _MAX_RESETS_EPOCH]; всё остальное — как мусорное поле.
+
+    Общий безопасный предел для любого epoch-поля схемы (resets_epoch,
+    updated_epoch) — оба в итоге идут в datetime-конверсии ниже по потоку
+    (format_reset/format_age), которые падают OverflowError за его пределами.
+    """
     return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= _MAX_RESETS_EPOCH
 
 
-def _window_label(key: str, raw: Mapping) -> str | None:
+def _window_label(key: str, raw: Mapping[str, object]) -> str | None:
     """Ярлык окна: фиксированный текст для known-ключей, из файла — для model:*.
 
     Неизвестный ключ (не five_hour/seven_day/model:*) возвращает None и тем
@@ -115,7 +121,7 @@ def _parse_window(key: str, raw: object) -> Window | None:
     if not _is_plain_number(percent):
         return None
     resets_epoch = raw.get("resets_epoch")
-    if resets_epoch is not None and not _is_valid_resets_epoch(resets_epoch):
+    if resets_epoch is not None and not _is_valid_epoch(resets_epoch):
         return None
     label = _window_label(key, raw)
     if label is None:
@@ -181,10 +187,6 @@ def _parse_extra_usage(raw: object) -> ExtraUsage | None:
     )
 
 
-def _optional_int(value: object) -> int | None:
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
 def read_state(path: Path | None = None) -> Snapshot:
     """Читает и валидирует файл состояния. Контракт: никогда не бросает исключение."""
     target = path if path is not None else state_path()
@@ -216,7 +218,7 @@ def read_state(path: Path | None = None) -> Snapshot:
 
     windows = _parse_windows(data["limits"])
     return Snapshot(
-        updated_epoch=_optional_int(data.get("updated_epoch")),
+        updated_epoch=(data.get("updated_epoch") if _is_valid_epoch(data.get("updated_epoch")) else None),
         windows=MappingProxyType(windows),
         order=tuple(_resolve_order(data.get("order"), windows)),
         extra_usage=_parse_extra_usage(data.get("extra_usage")),

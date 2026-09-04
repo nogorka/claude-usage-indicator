@@ -56,8 +56,9 @@ def _on_destroy(_widget: Gtk.Window) -> None:
 def _on_timeout(win: Gtk.Window) -> bool:
     if _window is not win:
         return False  # окно уже закрыто (и не факт, что не открыто заново) — этот таймер отслужил
-    _safe_refresh_content(win)
-    return True
+    # Неудачное обновление тоже останавливает таймер: иначе битый/недоступный
+    # файл состояния даёт бесконечный спам в stderr каждые 10 секунд без отката.
+    return _safe_refresh_content(win)
 
 
 def _safe_refresh_content(win: Gtk.Window) -> bool:
