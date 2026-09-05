@@ -41,8 +41,8 @@ class ReadStateValidInputTests(unittest.TestCase):
         self.assertEqual(
             snapshot.windows,
             {
-                "five_hour": Window(percent=42.3, resets_epoch=1788550200, label="5 часов"),
-                "seven_day": Window(percent=55.0, resets_epoch=1788700000, label="7 дней"),
+                "five_hour": Window(percent=42.3, resets_epoch=1788550200, label="5 hours"),
+                "seven_day": Window(percent=55.0, resets_epoch=1788700000, label="7 days"),
             },
         )
         self.assertEqual(snapshot.order, ("five_hour", "seven_day"))

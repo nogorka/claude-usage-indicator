@@ -13,7 +13,7 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         *)
-            echo "uninstall.sh: неизвестный аргумент: $arg" >&2
+            echo "uninstall.sh: unknown argument: $arg" >&2
             exit 1
             ;;
     esac
@@ -44,7 +44,7 @@ disable_unit() {
     # Юнит-файла нет — значит, systemd про нас никогда не знал, disable
     # на неизвестном юниту systemd имени завершится ошибкой под set -e.
     if [[ ! -f "$UNIT_DEST" ]]; then
-        echo "юнит-файл отсутствует, пропускаю: $UNIT_DEST"
+        echo "unit file missing, skipping: $UNIT_DEST"
         return
     fi
     run systemctl --user disable --now "$UNIT_NAME"
@@ -61,16 +61,16 @@ remove_unit_file() {
 unlink_hook() {
     if [[ ! -L "$HOOK_LINK" ]]; then
         if [[ -e "$HOOK_LINK" ]]; then
-            echo "uninstall.sh: $HOOK_LINK существует, но не симлинок — не трогаю" >&2
+            echo "uninstall.sh: $HOOK_LINK exists but is not a symlink — leaving it alone" >&2
         else
-            echo "симлинк хука отсутствует, пропускаю: $HOOK_LINK"
+            echo "hook symlink missing, skipping: $HOOK_LINK"
         fi
         return
     fi
     local current
     current="$(readlink -f "$HOOK_LINK")"
     if [[ "$current" != "$HOOK_SOURCE" ]]; then
-        echo "uninstall.sh: $HOOK_LINK указывает на другой репозиторий ($current) — не трогаю" >&2
+        echo "uninstall.sh: $HOOK_LINK points to a different repository ($current) — leaving it alone" >&2
         return
     fi
     run rm -f "$HOOK_LINK"
@@ -81,4 +81,4 @@ disable_unit
 remove_unit_file
 unlink_hook
 
-echo "Готово."
+echo "Done."

@@ -14,7 +14,7 @@ for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         *)
-            echo "install.sh: неизвестный аргумент: $arg" >&2
+            echo "install.sh: unknown argument: $arg" >&2
             exit 1
             ;;
     esac
@@ -44,15 +44,15 @@ link_hook() {
         local current
         current="$(readlink -f "$HOOK_LINK")"
         if [[ "$current" == "$HOOK_SOURCE" ]]; then
-            echo "хук уже установлен: $HOOK_LINK -> $HOOK_SOURCE"
+            echo "hook already installed: $HOOK_LINK -> $HOOK_SOURCE"
             return
         fi
-        echo "хук переуказывается на текущий репозиторий: $current -> $HOOK_SOURCE"
+        echo "hook re-pointed to the current repository: $current -> $HOOK_SOURCE"
         run ln -sfn "$HOOK_SOURCE" "$HOOK_LINK"
         return
     fi
     if [[ -e "$HOOK_LINK" ]]; then
-        echo "install.sh: $HOOK_LINK уже существует и не является симлинком — не трогаю" >&2
+        echo "install.sh: $HOOK_LINK already exists and is not a symlink — leaving it alone" >&2
         exit 1
     fi
     run ln -s "$HOOK_SOURCE" "$HOOK_LINK"
@@ -63,7 +63,7 @@ install_unit() {
     local rendered
     rendered="$(sed "s|@@PYTHONPATH@@|$REPO_ROOT/src|g" "$UNIT_TEMPLATE")"
     if [[ "$DRY_RUN" -eq 1 ]]; then
-        printf '[dry-run] записал бы юнит %s (PYTHONPATH=%s/src)\n' "$UNIT_DEST" "$REPO_ROOT"
+        printf '[dry-run] would write unit %s (PYTHONPATH=%s/src)\n' "$UNIT_DEST" "$REPO_ROOT"
         return
     fi
     # Юнит генерируется целиком — перезапись существующего файла безопасна
@@ -72,7 +72,7 @@ install_unit() {
     tmp="$(mktemp "$UNIT_DIR/.$UNIT_NAME.XXXXXX")"
     printf '%s\n' "$rendered" > "$tmp"
     mv -f "$tmp" "$UNIT_DEST"
-    echo "юнит записан: $UNIT_DEST"
+    echo "unit written: $UNIT_DEST"
 }
 
 enable_unit() {
@@ -93,4 +93,4 @@ link_hook
 install_unit
 enable_unit
 
-echo "Готово. Статус: systemctl --user status $UNIT_NAME"
+echo "Done. Status: systemctl --user status $UNIT_NAME"

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Правка ~/.claude/settings.json: добавление или снятие блока statusLine.
+"""Patch ~/.claude/settings.json: add or remove the statusLine block.
 
-Вынесено из install.sh/uninstall.sh отдельным скриптом ради tests/test_patch_settings.py —
-логику json-правки нужно гонять в изоляции, с подставным путём settings.json,
-не запуская install.sh/uninstall.sh целиком.
+Split out of install.sh/uninstall.sh into a separate script for the sake of
+tests/test_patch_settings.py — the json-patching logic needs to run in
+isolation, against a stand-in settings.json path, without running
+install.sh/uninstall.sh in full.
 
-Ноль сети, ноль доступа к секретам — только чтение/запись одного JSON-файла.
+Zero network access, zero access to secrets — only reads/writes a single JSON file.
 """
 from __future__ import annotations
 
@@ -39,7 +40,7 @@ def load_settings(path: Path) -> dict[str, Any]:
         return {}
     data = json.loads(raw)
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: корень settings.json должен быть JSON-объектом")
+        raise ValueError(f"{path}: settings.json root must be a JSON object")
     return data
 
 
@@ -55,7 +56,7 @@ def plan_install(settings: dict[str, Any], command: str) -> dict[str, Any] | Non
         return None
     if current is not None:
         raise StatusLineConflict(
-            f"statusLine уже занят: {json.dumps(current, ensure_ascii=False)}"
+            f"statusLine is already set: {json.dumps(current, ensure_ascii=False)}"
         )
     return {**settings, "statusLine": expected}
 
@@ -109,7 +110,7 @@ def _apply(action: str, command: str, settings_path: Path, dry_run: bool) -> int
     try:
         settings = load_settings(settings_path)
     except (OSError, ValueError) as exc:
-        print(f"patch-settings: не удалось прочитать {settings_path}: {exc}", file=sys.stderr)
+        print(f"patch-settings: couldn't read {settings_path}: {exc}", file=sys.stderr)
         return 1
 
     planner = plan_install if action == "install" else plan_uninstall
@@ -117,23 +118,23 @@ def _apply(action: str, command: str, settings_path: Path, dry_run: bool) -> int
         new_settings = planner(settings, command)
     except StatusLineConflict as exc:
         print(f"patch-settings: {exc}", file=sys.stderr)
-        print("Установка остановлена, файл не тронут.", file=sys.stderr)
+        print("Installation stopped, file untouched.", file=sys.stderr)
         return 1
 
     if new_settings is None:
-        print(f"patch-settings: изменений не требуется ({settings_path})")
+        print(f"patch-settings: no changes needed ({settings_path})")
         return 0
 
-    verb = "установлен" if action == "install" else "снят"
+    verb = "installed" if action == "install" else "removed"
     if dry_run:
-        print(f"patch-settings: [dry-run] statusLine был бы {verb} в {settings_path}")
+        print(f"patch-settings: [dry-run] statusLine would be {verb} in {settings_path}")
         return 0
 
     backup_path = backup_settings(settings_path)
     atomic_write(settings_path, new_settings)
     if backup_path is not None:
-        print(f"patch-settings: резервная копия — {backup_path}")
-    print(f"patch-settings: statusLine {verb} в {settings_path}")
+        print(f"patch-settings: backup created — {backup_path}")
+    print(f"patch-settings: statusLine {verb} in {settings_path}")
     return 0
 
 
@@ -141,11 +142,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=["install", "uninstall"])
     parser.add_argument(
-        "--command", required=True, help="путь symlink-хука — значение statusLine.command"
+        "--command", required=True, help="path to the hook symlink — value of statusLine.command"
     )
     parser.add_argument("--settings", type=Path, default=DEFAULT_SETTINGS_PATH)
     parser.add_argument(
-        "--dry-run", action="store_true", help="только напечатать план, ничего не писать на диск"
+        "--dry-run", action="store_true", help="only print the plan, don't write anything to disk"
     )
     args = parser.parse_args(argv)
     return _apply(args.action, args.command, args.settings, args.dry_run)

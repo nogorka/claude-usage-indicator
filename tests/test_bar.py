@@ -6,7 +6,7 @@ import time
 import unittest
 
 from claude_usage_indicator.bar import (
-    _plural_ru,
+    _plural_en,
     format_age,
     format_reset,
     is_alarm,
@@ -63,11 +63,11 @@ class RenderBarTests(unittest.TestCase):
 
 class PanelKeyTests(unittest.TestCase):
     def test_five_hour_short_key(self) -> None:
-        window = Window(percent=1.0, resets_epoch=None, label="5 часов")
+        window = Window(percent=1.0, resets_epoch=None, label="5 hours")
         self.assertEqual(panel_key("five_hour", window), "5h")
 
     def test_seven_day_short_key(self) -> None:
-        window = Window(percent=1.0, resets_epoch=None, label="7 дней")
+        window = Window(percent=1.0, resets_epoch=None, label="7 days")
         self.assertEqual(panel_key("seven_day", window), "7d")
 
     def test_model_scoped_key_uses_window_label(self) -> None:
@@ -78,8 +78,8 @@ class PanelKeyTests(unittest.TestCase):
 class PanelLabelTests(unittest.TestCase):
     def test_both_fixed_windows(self) -> None:
         windows = {
-            "five_hour": Window(percent=42.3, resets_epoch=None, label="5 часов"),
-            "seven_day": Window(percent=55.0, resets_epoch=None, label="7 дней"),
+            "five_hour": Window(percent=42.3, resets_epoch=None, label="5 hours"),
+            "seven_day": Window(percent=55.0, resets_epoch=None, label="7 days"),
         }
         snapshot = _snapshot(windows, ("five_hour", "seven_day"))
         label = panel_label(snapshot)
@@ -90,8 +90,8 @@ class PanelLabelTests(unittest.TestCase):
 
     def test_three_windows_including_model_scoped(self) -> None:
         windows = {
-            "five_hour": Window(percent=42.3, resets_epoch=None, label="5 часов"),
-            "seven_day": Window(percent=55.0, resets_epoch=None, label="7 дней"),
+            "five_hour": Window(percent=42.3, resets_epoch=None, label="5 hours"),
+            "seven_day": Window(percent=55.0, resets_epoch=None, label="7 days"),
             "model:fable": Window(percent=21.0, resets_epoch=None, label="Fable"),
         }
         snapshot = _snapshot(windows, ("five_hour", "seven_day", "model:fable"))
@@ -104,7 +104,7 @@ class PanelLabelTests(unittest.TestCase):
         )
 
     def test_only_one_window_no_separator(self) -> None:
-        windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 часов")}
+        windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
         label = panel_label(snapshot)
         self.assertNotIn("·", label)
@@ -112,28 +112,28 @@ class PanelLabelTests(unittest.TestCase):
 
     def test_no_windows_at_all_reports_no_data(self) -> None:
         snapshot = _snapshot({}, ())
-        self.assertEqual(panel_label(snapshot), "Claude: нет данных")
+        self.assertEqual(panel_label(snapshot), "Claude: no data")
 
     def test_problem_snapshot_reports_no_data(self) -> None:
         snapshot = _snapshot({}, (), updated_epoch=None, problem="no_file")
-        self.assertEqual(panel_label(snapshot), "Claude: нет данных")
+        self.assertEqual(panel_label(snapshot), "Claude: no data")
 
 
 class IsAlarmTests(unittest.TestCase):
     def test_exactly_at_threshold_triggers_alarm(self) -> None:
-        windows = {"five_hour": Window(percent=80.0, resets_epoch=None, label="5 часов")}
+        windows = {"five_hour": Window(percent=80.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
         self.assertTrue(is_alarm(snapshot))
 
     def test_just_below_threshold_does_not_trigger(self) -> None:
-        windows = {"five_hour": Window(percent=79.9, resets_epoch=None, label="5 часов")}
+        windows = {"five_hour": Window(percent=79.9, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
         self.assertFalse(is_alarm(snapshot))
 
     def test_model_scoped_window_can_trigger_alarm(self) -> None:
         """Fable, упёршийся в потолок, это ровно тот случай, ради которого индикатор делается."""
         windows = {
-            "five_hour": Window(percent=10.0, resets_epoch=None, label="5 часов"),
+            "five_hour": Window(percent=10.0, resets_epoch=None, label="5 hours"),
             "model:fable": Window(percent=95.0, resets_epoch=None, label="Fable"),
         }
         snapshot = _snapshot(windows, ("five_hour", "model:fable"))
@@ -166,17 +166,17 @@ class PanelStateTests(unittest.TestCase):
     """
 
     def test_same_snapshot_turns_stale_as_time_passes_without_new_read(self) -> None:
-        windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 часов")}
+        windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",), updated_epoch=1000)
         label_fresh, alarm_fresh = panel_state(snapshot, now_epoch=1000)
         label_stale, alarm_stale = panel_state(snapshot, now_epoch=1000 + 3601)
-        self.assertNotIn("устарело", label_fresh)
-        self.assertIn("устарело", label_stale)
+        self.assertNotIn("stale", label_fresh)
+        self.assertIn("stale", label_stale)
         self.assertFalse(alarm_fresh)
         self.assertFalse(alarm_stale)
 
     def test_alarm_adds_attention_prefix(self) -> None:
-        windows = {"five_hour": Window(percent=95.0, resets_epoch=None, label="5 часов")}
+        windows = {"five_hour": Window(percent=95.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",), updated_epoch=1000)
         label, alarm = panel_state(snapshot, now_epoch=1000)
         self.assertTrue(alarm)
@@ -185,53 +185,44 @@ class PanelStateTests(unittest.TestCase):
     def test_no_data_snapshot_reports_no_data_label(self) -> None:
         snapshot = _snapshot({}, (), updated_epoch=None)
         label, alarm = panel_state(snapshot, now_epoch=1_000_000)
-        self.assertEqual(label, "Claude: нет данных (устарело)")
+        self.assertEqual(label, "Claude: no data (stale)")
         self.assertFalse(alarm)
 
 
-class PluralRuTests(unittest.TestCase):
-    """Согласование русских числительных: 1/2/5 — три разные формы."""
+class PluralEnTests(unittest.TestCase):
+    """Согласование английских числительных: 1 — singular, всё остальное — plural."""
 
     def test_one_form(self) -> None:
-        self.assertEqual(_plural_ru(1, "минуту", "минуты", "минут"), "минуту")
-        self.assertEqual(_plural_ru(21, "минуту", "минуты", "минут"), "минуту")
+        self.assertEqual(_plural_en(1, "minute"), "minute")
 
-    def test_few_form(self) -> None:
-        self.assertEqual(_plural_ru(2, "минуту", "минуты", "минут"), "минуты")
-        self.assertEqual(_plural_ru(4, "минуту", "минуты", "минут"), "минуты")
-
-    def test_many_form(self) -> None:
-        self.assertEqual(_plural_ru(5, "минуту", "минуты", "минут"), "минут")
-        self.assertEqual(_plural_ru(0, "минуту", "минуты", "минут"), "минут")
-
-    def test_teen_exception_uses_many_form(self) -> None:
-        """11-14 не согласуются по последней цифре: не «11 минуту», а «11 минут»."""
-        self.assertEqual(_plural_ru(11, "минуту", "минуты", "минут"), "минут")
-        self.assertEqual(_plural_ru(12, "минуту", "минуты", "минут"), "минут")
+    def test_plural_form(self) -> None:
+        for n in (0, 2, 5, 11, 21):
+            with self.subTest(n=n):
+                self.assertEqual(_plural_en(n, "minute"), "minutes")
 
 
 class FormatAgeTests(unittest.TestCase):
     def test_just_now(self) -> None:
-        self.assertEqual(format_age(1000, now_epoch=1005), "только что")
+        self.assertEqual(format_age(1000, now_epoch=1005), "just now")
 
     def test_one_minute_ago(self) -> None:
-        self.assertEqual(format_age(0, now_epoch=60), "1 минуту назад")
+        self.assertEqual(format_age(0, now_epoch=60), "1 minute ago")
 
     def test_two_minutes_ago(self) -> None:
-        self.assertEqual(format_age(0, now_epoch=120), "2 минуты назад")
+        self.assertEqual(format_age(0, now_epoch=120), "2 minutes ago")
 
     def test_five_minutes_ago(self) -> None:
-        self.assertEqual(format_age(0, now_epoch=300), "5 минут назад")
+        self.assertEqual(format_age(0, now_epoch=300), "5 minutes ago")
 
     def test_hours_ago(self) -> None:
-        self.assertEqual(format_age(0, now_epoch=2 * 3600), "2 часа назад")
+        self.assertEqual(format_age(0, now_epoch=2 * 3600), "2 hours ago")
 
     def test_days_ago(self) -> None:
-        self.assertEqual(format_age(0, now_epoch=5 * 86400), "5 дней назад")
+        self.assertEqual(format_age(0, now_epoch=5 * 86400), "5 days ago")
 
     def test_half_boundary_rounds_up_not_to_even(self) -> None:
         """2.5 минуты: builtin round() банковски округлил бы вниз к 2 (чётное) — тут нужен round-half-up."""
-        self.assertEqual(format_age(0, now_epoch=150), "3 минуты назад")
+        self.assertEqual(format_age(0, now_epoch=150), "3 minutes ago")
 
 
 class _FixedTzMixin:
@@ -254,18 +245,18 @@ class _FixedTzMixin:
 
 class FormatResetTests(_FixedTzMixin, unittest.TestCase):
     def test_none_reports_unknown(self) -> None:
-        self.assertEqual(format_reset(None, now_epoch=0), "время сброса неизвестно")
+        self.assertEqual(format_reset(None, now_epoch=0), "reset time unknown")
 
     def test_future_reset_shows_countdown(self) -> None:
         # 23:10 UTC в тот же день; now на 1ч23м раньше.
         reset_epoch = 23 * 3600 + 10 * 60
         now_epoch = reset_epoch - (1 * 3600 + 23 * 60)
-        self.assertEqual(format_reset(reset_epoch, now_epoch), "сброс в 23:10, через 1 ч 23 м")
+        self.assertEqual(format_reset(reset_epoch, now_epoch), "resets at 23:10, in 1h 23m")
 
     def test_past_reset_has_no_countdown(self) -> None:
         reset_epoch = 10 * 3600
         now_epoch = reset_epoch + 60
-        self.assertEqual(format_reset(reset_epoch, now_epoch), "сброс в 10:00")
+        self.assertEqual(format_reset(reset_epoch, now_epoch), "resets at 10:00")
 
 
 class FormatResetExtremeTzTests(unittest.TestCase):
@@ -315,12 +306,14 @@ class ProblemTextTests(unittest.TestCase):
                 self.assertTrue(text)
 
     def test_no_limits_message_matches_brief_wording(self) -> None:
-        self.assertEqual(problem_text("no_limits"), "цифры появятся после первого запроса в Claude Code")
+        self.assertEqual(
+            problem_text("no_limits"), "numbers will appear after the first request in Claude Code"
+        )
 
     def test_no_file_message_matches_brief_wording(self) -> None:
         self.assertEqual(
             problem_text("no_file"),
-            "Claude Code ещё ни разу не запускался с установленным хуком",
+            "Claude Code has never run with the hook installed",
         )
 
     def test_known_codes_have_distinct_messages(self) -> None:

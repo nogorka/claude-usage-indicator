@@ -16,10 +16,10 @@ from .state import FIVE_HOUR, SEVEN_DAY, Snapshot, Window
 _FULL_CELL = "▓"
 _EMPTY_CELL = "░"
 _SEPARATOR = " · "
-_NO_DATA_LABEL = "Claude: нет данных"
+_NO_DATA_LABEL = "Claude: no data"
 _PANEL_SHORT_KEYS = {FIVE_HOUR: "5h", SEVEN_DAY: "7d"}
 _ATTENTION_PREFIX = "⚠ "
-_STALE_SUFFIX = " (устарело)"
+_STALE_SUFFIX = " (stale)"
 
 
 def _round_half_up(value: float) -> int:
@@ -91,62 +91,51 @@ def panel_state(snapshot: Snapshot, now_epoch: float) -> tuple[str, bool]:
     return label, alarm
 
 
-def _plural_ru(n: int, one: str, few: str, many: str) -> str:
-    """Согласование русских числительных: 1 — one, 2-4 — few, остальное — many.
-
-    11-14 — исключение из общего правила по последней цифре (не «11 минуту»).
-    """
-    n_abs = abs(n)
-    if 11 <= n_abs % 100 <= 14:
-        return many
-    last_digit = n_abs % 10
-    if last_digit == 1:
-        return one
-    if 2 <= last_digit <= 4:
-        return few
-    return many
+def _plural_en(n: int, singular: str) -> str:
+    """Согласование английских числительных: 1 — singular, всё остальное — regular plural (+s)."""
+    return singular if n == 1 else singular + "s"
 
 
 def format_age(updated_epoch: int, now_epoch: float) -> str:
-    """Человеческое «N назад» на русском с согласованием числительных."""
+    """Человеческое «N назад» на английском с согласованием числительных."""
     age_s = max(0.0, now_epoch - updated_epoch)
     if age_s < 60:
-        return "только что"
+        return "just now"
     minutes = _round_half_up(age_s / 60)
     if minutes < 60:
-        return f"{minutes} {_plural_ru(minutes, 'минуту', 'минуты', 'минут')} назад"
+        return f"{minutes} {_plural_en(minutes, 'minute')} ago"
     hours = _round_half_up(age_s / 3600)
     if hours < 24:
-        return f"{hours} {_plural_ru(hours, 'час', 'часа', 'часов')} назад"
+        return f"{hours} {_plural_en(hours, 'hour')} ago"
     days = _round_half_up(age_s / 86400)
-    return f"{days} {_plural_ru(days, 'день', 'дня', 'дней')} назад"
+    return f"{days} {_plural_en(days, 'day')} ago"
 
 
 def format_reset(resets_epoch: int | None, now_epoch: float) -> str:
-    """«сброс в HH:MM, через N ч M м» в локальном времени машины; None — окна сброса нет."""
+    """«resets at HH:MM, in N h M m» в локальном времени машины; None — окна сброса нет."""
     if resets_epoch is None:
-        return "время сброса неизвестно"
+        return "reset time unknown"
     reset_dt = datetime.fromtimestamp(resets_epoch, tz=timezone.utc).astimezone()
     time_str = reset_dt.strftime("%H:%M")
     delta_s = resets_epoch - now_epoch
     if delta_s <= 0:
-        return f"сброс в {time_str}"
+        return f"resets at {time_str}"
     hours, remainder = divmod(int(delta_s), 3600)
     minutes = remainder // 60
-    return f"сброс в {time_str}, через {hours} ч {minutes} м"
+    return f"resets at {time_str}, in {hours}h {minutes}m"
 
 
 _PROBLEM_MESSAGES = {
-    "no_file": "Claude Code ещё ни разу не запускался с установленным хуком",
-    "read_error": "не удалось прочитать файл состояния — проверьте права доступа",
-    "empty_file": "файл состояния пуст — хук ещё не записал данные",
-    "bad_json": "файл состояния повреждён — в нём невалидный JSON",
-    "bad_root": "файл состояния повреждён — неверная структура данных",
-    "bad_schema": "файл состояния записан другой версией хука",
-    "bad_encoding": "файл состояния повреждён — неверная кодировка",
-    "no_limits": "цифры появятся после первого запроса в Claude Code",
+    "no_file": "Claude Code has never run with the hook installed",
+    "read_error": "couldn't read the state file — check file permissions",
+    "empty_file": "state file is empty — the hook hasn't written data yet",
+    "bad_json": "state file is corrupted — invalid JSON",
+    "bad_root": "state file is corrupted — invalid data structure",
+    "bad_schema": "state file was written by a different hook version",
+    "bad_encoding": "state file is corrupted — invalid encoding",
+    "no_limits": "numbers will appear after the first request in Claude Code",
 }
-_UNKNOWN_PROBLEM_MESSAGE = "не удалось прочитать данные об использовании"
+_UNKNOWN_PROBLEM_MESSAGE = "couldn't read usage data"
 
 
 def problem_text(problem: str | None) -> str | None:

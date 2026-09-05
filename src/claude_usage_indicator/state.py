@@ -35,7 +35,7 @@ from typing import TypeGuard
 FIVE_HOUR = "five_hour"
 SEVEN_DAY = "seven_day"
 _MODEL_PREFIX = "model:"
-_FIXED_LABELS = {FIVE_HOUR: "5 часов", SEVEN_DAY: "7 дней"}
+_FIXED_LABELS = {FIVE_HOUR: "5 hours", SEVEN_DAY: "7 days"}
 # Конец 9999 года в UTC минус запас в 14 часов (крайнее восточное смещение,
 # Кирибати) — format_reset() конвертирует в локальную зону машины через
 # astimezone(), и без запаса положительное смещение переносит результат за

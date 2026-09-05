@@ -19,7 +19,7 @@ from gi.repository import GLib, Gtk
 from . import bar, state
 
 _POLL_INTERVAL_S = 10
-_WINDOW_TITLE = "Claude Code — лимиты"
+_WINDOW_TITLE = "Claude Code — Limits"
 
 # Единственная переменная модуля: живой Gtk.Window или None, если окно закрыто.
 # Второго счётчика для таймера не нужно — колбэк сверяет захваченный им же
@@ -74,7 +74,7 @@ def _safe_refresh_content(win: Gtk.Window) -> bool:
     try:
         _refresh_content(win)
     except Exception:
-        print("claude-usage-indicator: ошибка сборки окна деталей, содержимое не обновлено:", file=sys.stderr)
+        print("claude-usage-indicator: details window build failed, content not updated:", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return False
     return True
@@ -131,7 +131,7 @@ def _append_window_section(box: Gtk.Box, window: state.Window, now: float) -> No
 
 
 def _append_extra_usage(box: Gtk.Box, extra: state.ExtraUsage) -> None:
-    _add_label(box, "Доп. расход")
+    _add_label(box, "Extra usage")
     _add_level_bar(box, extra.percent)
     _add_label(box, f"{bar.round_percent(extra.percent)}%")
     box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
@@ -149,6 +149,6 @@ def _append_problem_hint(box: Gtk.Box, snapshot: state.Snapshot) -> None:
 
 def _append_age(box: Gtk.Box, snapshot: state.Snapshot, now: float) -> None:
     if snapshot.updated_epoch is None:
-        _add_label(box, "данные отсутствуют")
+        _add_label(box, "no data")
     else:
-        _add_label(box, f"данные {bar.format_age(snapshot.updated_epoch, now)}")
+        _add_label(box, f"data {bar.format_age(snapshot.updated_epoch, now)}")
