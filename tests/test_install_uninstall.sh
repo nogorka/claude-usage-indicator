@@ -219,7 +219,7 @@ test_install_fresh_full() {
     local settings; settings="$(settings_path_of "$home")"
     local status_line; status_line="$(jq -c '.statusLine' "$settings" 2>/dev/null)"
     assert_eq "$desc: statusLine в settings.json" \
-        "{\"type\":\"command\",\"command\":\"$(hook_link_of "$home")\"}" "$status_line"
+        "{\"type\":\"command\",\"command\":\"$(hook_link_of "$home")\",\"refreshInterval\":10}" "$status_line"
 
     assert_eq "$desc: systemctl daemon-reload" "--user daemon-reload" "$(sed -n '1p' "$RUN_SYSTEMCTL_LOG")"
     assert_eq "$desc: systemctl enable --now" "--user enable --now $UNIT_NAME" "$(sed -n '2p' "$RUN_SYSTEMCTL_LOG")"

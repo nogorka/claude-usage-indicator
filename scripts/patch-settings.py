@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any
 
 DEFAULT_SETTINGS_PATH = Path.home() / ".claude" / "settings.json"
+# Таймер statusLine тикает независимо от ввода в сессии (см. доку Claude Code
+# про refreshInterval) — без него хук молчит, пока пользователь не наберёт
+# что-то в терминальном Claude Code, и не срабатывает вовсе для сессий
+# VS Code extension. 10 секунд — та же частота, с которой демон перечитывает
+# файл состояния (_POLL_INTERVAL_S в indicator.py/window.py); чаще смысла нет.
+_REFRESH_INTERVAL_S = 10
 
 
 class StatusLineConflict(RuntimeError):
@@ -28,7 +34,7 @@ class StatusLineConflict(RuntimeError):
 
 
 def _expected_block(command: str) -> dict[str, Any]:
-    return {"type": "command", "command": command}
+    return {"type": "command", "command": command, "refreshInterval": _REFRESH_INTERVAL_S}
 
 
 def load_settings(path: Path) -> dict[str, Any]:
