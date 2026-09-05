@@ -160,8 +160,8 @@ test_link_hook_already_correct() {
     run_script "$INSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: сообщение" "$RUN_STDOUT" "хук уже установлен"
-    assert_not_contains "$desc: не переуказывается" "$RUN_STDOUT" "переуказывается"
+    assert_contains "$desc: сообщение" "$RUN_STDOUT" "hook already installed"
+    assert_not_contains "$desc: не переуказывается" "$RUN_STDOUT" "re-pointed"
     assert_symlink_target "$desc" "$(hook_link_of "$home")" "$HOOK_SOURCE"
     assert_eq "$desc: mtime симлинка не изменился" "$mtime_before" "$(stat -c '%Y' "$(hook_link_of "$home")")"
 }
@@ -176,7 +176,7 @@ test_link_hook_repoint() {
     run_script "$INSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: сообщение" "$RUN_STDOUT" "переуказывается"
+    assert_contains "$desc: сообщение" "$RUN_STDOUT" "re-pointed"
     assert_symlink_target "$desc" "$(hook_link_of "$home")" "$HOOK_SOURCE"
 }
 
@@ -189,7 +189,7 @@ test_link_hook_blocked_by_regular_file() {
     run_script "$INSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "1" "$RUN_EXIT"
-    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "уже существует и не является симлинком"
+    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "already exists and is not a symlink"
     assert_regular_file "$desc: файл остался обычным" "$(hook_link_of "$home")"
     assert_eq "$desc: содержимое не тронуто" "не симлинк" "$(cat "$(hook_link_of "$home")")"
     # Ничего дальше не выполняется: install_unit и enable_unit не достигнуты.
@@ -208,7 +208,7 @@ test_install_fresh_full() {
     run_script "$INSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: финальное сообщение" "$RUN_STDOUT" "Готово."
+    assert_contains "$desc: финальное сообщение" "$RUN_STDOUT" "Done."
     assert_symlink_target "$desc" "$(hook_link_of "$home")" "$HOOK_SOURCE"
 
     local unit_dest; unit_dest="$(unit_dest_of "$home")"
@@ -250,9 +250,9 @@ test_install_idempotent_rerun() {
     run_script "$INSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: хук распознан как уже установленный" "$RUN_STDOUT" "хук уже установлен"
-    assert_not_contains "$desc: без переуказывания" "$RUN_STDOUT" "переуказывается"
-    assert_contains "$desc: patch-settings без изменений" "$RUN_STDOUT" "изменений не требуется"
+    assert_contains "$desc: хук распознан как уже установленный" "$RUN_STDOUT" "hook already installed"
+    assert_not_contains "$desc: без переуказывания" "$RUN_STDOUT" "re-pointed"
+    assert_contains "$desc: patch-settings без изменений" "$RUN_STDOUT" "no changes needed"
     assert_eq "$desc: unit-файл не изменился" "$unit_before" "$(cat "$unit_dest")"
     assert_eq "$desc: settings.json не изменился" "$settings_before" "$(cat "$settings")"
     assert_eq "$desc: цель симлинка не изменилась" "$target_before" "$(readlink -f "$(hook_link_of "$home")")"
@@ -279,7 +279,7 @@ test_install_unknown_flag() {
     run_script "$INSTALL_SH" "$home" --bogus-flag
 
     assert_eq "$desc: exit" "1" "$RUN_EXIT"
-    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "неизвестный аргумент"
+    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "unknown argument"
     assert_absent "$desc: ничего не создано" "$(hook_link_of "$home")"
 }
 
@@ -298,7 +298,7 @@ test_install_order_guarantee_conflict_aborts_before_side_effects() {
     run_script "$INSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "1" "$RUN_EXIT"
-    assert_contains "$desc: сообщение о конфликте" "$RUN_STDERR" "statusLine уже занят"
+    assert_contains "$desc: сообщение о конфликте" "$RUN_STDERR" "statusLine is already set"
     assert_eq "$desc: settings.json не изменился" "$before" "$(cat "$settings")"
     assert_absent "$desc: симлинк не создан" "$(hook_link_of "$home")"
     assert_absent "$desc: unit-каталог не создан" "$(unit_dir_of "$home")"
@@ -345,7 +345,7 @@ test_uninstall_unit_absent_is_noop_for_disable_and_remove() {
     run_script "$UNINSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: сообщение disable_unit" "$RUN_STDOUT" "юнит-файл отсутствует, пропускаю"
+    assert_contains "$desc: сообщение disable_unit" "$RUN_STDOUT" "unit file missing, skipping"
     assert_not_contains "$desc: disable не вызван" "$RUN_STDOUT" "disable"
     assert_systemctl_log_empty "$desc: systemctl не вызван вовсе" "$RUN_SYSTEMCTL_LOG"
     assert_absent "$desc: unit-файл по-прежнему отсутствует" "$(unit_dest_of "$home")"
@@ -358,7 +358,7 @@ test_uninstall_unlink_hook_missing_symlink() {
     run_script "$UNINSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: сообщение" "$RUN_STDOUT" "симлинк хука отсутствует, пропускаю"
+    assert_contains "$desc: сообщение" "$RUN_STDOUT" "hook symlink missing, skipping"
 }
 
 test_uninstall_unlink_hook_blocked_by_regular_file() {
@@ -370,8 +370,8 @@ test_uninstall_unlink_hook_blocked_by_regular_file() {
     run_script "$UNINSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "существует, но не симлинок — не трогаю"
-    assert_contains "$desc: скрипт всё равно доходит до конца" "$RUN_STDOUT" "Готово."
+    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "exists but is not a symlink — leaving it alone"
+    assert_contains "$desc: скрипт всё равно доходит до конца" "$RUN_STDOUT" "Done."
     assert_regular_file "$desc: файл остался обычным" "$(hook_link_of "$home")"
     assert_eq "$desc: содержимое не тронуто" "не симлинок" "$(cat "$(hook_link_of "$home")")"
 }
@@ -386,7 +386,7 @@ test_uninstall_unlink_hook_points_elsewhere() {
     run_script "$UNINSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "указывает на другой репозиторий"
+    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "points to a different repository"
     assert_symlink_target "$desc: симлинк не тронут" "$(hook_link_of "$home")" \
         "$(readlink -f "$home/other-repo/bin/claude-statusline.sh")"
 }
@@ -416,7 +416,7 @@ test_uninstall_full_teardown_after_install() {
     run_script "$UNINSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: финальное сообщение" "$RUN_STDOUT" "Готово."
+    assert_contains "$desc: финальное сообщение" "$RUN_STDOUT" "Done."
 
     local has_status_line; has_status_line="$(jq -r 'has("statusLine")' "$(settings_path_of "$home")")"
     assert_eq "$desc: statusLine снят" "false" "$has_status_line"
@@ -482,10 +482,10 @@ test_uninstall_idempotent_on_already_removed() {
     run_script "$UNINSTALL_SH" "$home"
 
     assert_eq "$desc: exit" "0" "$RUN_EXIT"
-    assert_contains "$desc: unpatch_settings без изменений" "$RUN_STDOUT" "изменений не требуется"
-    assert_contains "$desc: disable_unit: юнит-файл отсутствует" "$RUN_STDOUT" "юнит-файл отсутствует, пропускаю"
-    assert_contains "$desc: unlink_hook: симлинк отсутствует" "$RUN_STDOUT" "симлинк хука отсутствует, пропускаю"
-    assert_contains "$desc: финальное сообщение" "$RUN_STDOUT" "Готово."
+    assert_contains "$desc: unpatch_settings без изменений" "$RUN_STDOUT" "no changes needed"
+    assert_contains "$desc: disable_unit: юнит-файл отсутствует" "$RUN_STDOUT" "unit file missing, skipping"
+    assert_contains "$desc: unlink_hook: симлинк отсутствует" "$RUN_STDOUT" "hook symlink missing, skipping"
+    assert_contains "$desc: финальное сообщение" "$RUN_STDOUT" "Done."
     assert_systemctl_log_empty "$desc: systemctl не вызван на втором прогоне" "$RUN_SYSTEMCTL_LOG"
 }
 
@@ -498,7 +498,7 @@ test_uninstall_unknown_flag() {
     run_script "$UNINSTALL_SH" "$home" --bogus-flag
 
     assert_eq "$desc: exit" "1" "$RUN_EXIT"
-    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "неизвестный аргумент"
+    assert_contains "$desc: сообщение в stderr" "$RUN_STDERR" "unknown argument"
     assert_eq "$desc: settings.json не тронут" "$settings_before" "$(cat "$(settings_path_of "$home")")"
     assert_exists "$desc: симлинк не тронут" "$(hook_link_of "$home")"
 }

@@ -170,7 +170,7 @@ def dedup_by_key:
 | ([$order[] as $k
     | "\(label_of($k; $limits)) \(bar($limits[$k].percent)) \(rounded($limits[$k].percent))%"
    ]) as $segments
-| (if ($segments | length) == 0 then "Claude: нет данных" else ($segments | join(" · ")) end) as $status_line
+| (if ($segments | length) == 0 then "Claude: no data" else ($segments | join(" · ")) end) as $status_line
 
 | {limits: $limits, order: $order, status_line: $status_line}
   + (if $extra_usage != null then {extra_usage: $extra_usage} else {} end)

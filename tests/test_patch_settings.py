@@ -199,7 +199,7 @@ class CliEndToEndTests(unittest.TestCase):
             settings_path.write_text(original, encoding="utf-8")
             result = _run_cli("install", "--command", COMMAND, "--settings", str(settings_path))
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("statusLine уже занят", result.stderr)
+            self.assertIn("statusLine is already set", result.stderr)
             self.assertEqual(settings_path.read_text(encoding="utf-8"), original)
             self.assertFalse(settings_path.with_name("settings.json.bak").exists())
 

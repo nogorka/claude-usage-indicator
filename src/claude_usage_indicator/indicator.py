@@ -48,7 +48,7 @@ def autostart_enabled() -> bool:
             timeout=5,
         )
     except (OSError, subprocess.TimeoutExpired):
-        print("claude-usage-indicator: не удалось проверить автозапуск (systemctl):", file=sys.stderr)
+        print("claude-usage-indicator: couldn't check autostart status (systemctl):", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return False
     return result.returncode == 0
@@ -64,18 +64,18 @@ def set_autostart(enabled: bool) -> None:
     try:
         result = subprocess.run(["systemctl", "--user", action, "--quiet", _UNIT_NAME], timeout=5)
     except (OSError, subprocess.TimeoutExpired):
-        print(f"claude-usage-indicator: не удалось {action} автозапуск (systemctl):", file=sys.stderr)
+        print(f"claude-usage-indicator: couldn't {action} autostart (systemctl):", file=sys.stderr)
         traceback.print_exc(file=sys.stderr)
         return
     if result.returncode != 0:
         print(
-            f"claude-usage-indicator: systemctl {action} {_UNIT_NAME} завершился с кодом {result.returncode}",
+            f"claude-usage-indicator: systemctl {action} {_UNIT_NAME} exited with code {result.returncode}",
             file=sys.stderr,
         )
 
 
 def on_details() -> None:
-    """Открывает окно «Подробнее» с барами по каждому лимиту."""
+    """Открывает окно "Details…" с барами по каждому лимиту."""
     window.show_details_window()
 
 
@@ -88,8 +88,8 @@ class Indicator:
         )
         # Обе иконки задаются один раз: AppIndicator сам показывает attention-иконку,
         # когда статус переключается в ATTENTION — не нужно менять иконку на каждый refresh.
-        self._indicator.set_icon_full(_ICON_NORMAL, "лимиты в норме")
-        self._indicator.set_attention_icon_full(_ICON_ALARM, "лимит почти исчерпан")
+        self._indicator.set_icon_full(_ICON_NORMAL, "limits normal")
+        self._indicator.set_attention_icon_full(_ICON_ALARM, "limit almost exhausted")
         self._indicator.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
         # Кэш, а не запрос к systemctl на каждый тик: с пересборкой меню
         # каждые 10 секунд (см. refresh) опрос systemd на каждый тик означал
@@ -130,7 +130,7 @@ class Indicator:
         try:
             return bar.panel_state(snapshot, now)
         except Exception:
-            print("claude-usage-indicator: ошибка рендера панели, показываю «нет данных»:", file=sys.stderr)
+            print('claude-usage-indicator: panel render failed, showing "no data":', file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             return bar.panel_state(_RENDER_FAILED_SNAPSHOT, now)
 
@@ -139,7 +139,7 @@ class Indicator:
         try:
             menu = _build_menu(snapshot, now, self._autostart_cached, self._on_autostart_toggled)
         except Exception:
-            print("claude-usage-indicator: ошибка сборки меню, старое меню остаётся:", file=sys.stderr)
+            print("claude-usage-indicator: menu build failed, keeping the old menu:", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
             return
         self._indicator.set_menu(menu)
@@ -160,7 +160,7 @@ def _append_window_section(menu: Gtk.Menu, window: state.Window, now: float) -> 
 
 
 def _append_extra_usage(menu: Gtk.Menu, extra: state.ExtraUsage) -> None:
-    _add_static_item(menu, f"Доп. расход                {bar.round_percent(extra.percent)}%")
+    _add_static_item(menu, f"Extra usage                {bar.round_percent(extra.percent)}%")
     menu.append(Gtk.SeparatorMenuItem())
 
 
@@ -176,13 +176,13 @@ def _append_problem_hint(menu: Gtk.Menu, snapshot: state.Snapshot) -> None:
 
 def _append_age(menu: Gtk.Menu, snapshot: state.Snapshot, now: float) -> None:
     if snapshot.updated_epoch is None:
-        _add_static_item(menu, "данные отсутствуют")
+        _add_static_item(menu, "no data")
     else:
-        _add_static_item(menu, f"данные {bar.format_age(snapshot.updated_epoch, now)}")
+        _add_static_item(menu, f"data {bar.format_age(snapshot.updated_epoch, now)}")
 
 
 def _append_autostart_toggle(menu: Gtk.Menu, autostart_state: bool, on_toggled: Callable[[bool], None]) -> None:
-    item = Gtk.CheckMenuItem(label="Запускать при входе в систему")
+    item = Gtk.CheckMenuItem(label="Start at login")
     item.set_active(autostart_state)
     item.connect("toggled", lambda checkbox: on_toggled(checkbox.get_active()))
     menu.append(item)
@@ -207,14 +207,14 @@ def _build_menu(
         _append_extra_usage(menu, snapshot.extra_usage)
     _append_age(menu, snapshot, now)
     _append_autostart_toggle(menu, autostart_state, on_autostart_toggled)
-    _append_action_item(menu, "Подробнее…", on_details)
+    _append_action_item(menu, "Details…", on_details)
     menu.append(Gtk.SeparatorMenuItem())
-    _append_action_item(menu, "Выход", Gtk.main_quit)
+    _append_action_item(menu, "Quit", Gtk.main_quit)
     menu.show_all()
     return menu
 
 
 def main() -> None:
-    """Точка входа демона: держит GTK-цикл, пока пользователь не выберет «Выход»."""
+    """Точка входа демона: держит GTK-цикл, пока пользователь не выберет "Quit"."""
     Indicator()
     Gtk.main()

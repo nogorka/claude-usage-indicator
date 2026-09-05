@@ -136,7 +136,7 @@ test_no_rate_limits_key() {
     local desc="rate_limits отсутствует"
     run_hook "$(fixture no_rate_limits.json)"
     assert_common "$desc"
-    assert_stdout "$desc" "Claude: нет данных"
+    assert_stdout "$desc" "Claude: no data"
     assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
 }
 
@@ -144,7 +144,7 @@ test_empty_rate_limits() {
     local desc="rate_limits пустой объект"
     run_hook "$(fixture empty_rate_limits.json)"
     assert_common "$desc"
-    assert_stdout "$desc" "Claude: нет данных"
+    assert_stdout "$desc" "Claude: no data"
     assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
 }
 
@@ -152,7 +152,7 @@ test_rate_limits_not_object() {
     local desc="rate_limits не объект"
     run_hook "$(fixture rate_limits_not_object.json)"
     assert_common "$desc"
-    assert_stdout "$desc" "Claude: нет данных"
+    assert_stdout "$desc" "Claude: no data"
     assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
 }
 
@@ -223,7 +223,7 @@ test_model_scoped_null_utilization_skipped() {
     local desc="model_scoped: utilization:null пропускается целиком"
     run_hook "$(fixture model_scoped_null_utilization.json)"
     assert_common "$desc"
-    assert_stdout "$desc" "Claude: нет данных"
+    assert_stdout "$desc" "Claude: no data"
     assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
 }
 
@@ -231,7 +231,7 @@ test_model_scoped_empty_display_name_skipped() {
     local desc="model_scoped: пустой display_name пропускается целиком"
     run_hook "$(fixture model_scoped_empty_display_name.json)"
     assert_common "$desc"
-    assert_stdout "$desc" "Claude: нет данных"
+    assert_stdout "$desc" "Claude: no data"
     assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
 }
 
@@ -336,7 +336,7 @@ test_model_scoped_label_empty_after_sanitization_skipped() {
     local desc="model_scoped: label, пустой после санации, — окно пропускается целиком"
     run_hook "$(jq -n '{rate_limits: {model_scoped: [{display_name: "\n\t·  ", utilization: 44.0, resets_at: null}]}}')"
     assert_common "$desc"
-    assert_stdout "$desc" "Claude: нет данных"
+    assert_stdout "$desc" "Claude: no data"
     assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
 }
 

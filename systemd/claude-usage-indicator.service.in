@@ -4,7 +4,7 @@
 # и пишет результат в ~/.config/systemd/user/claude-usage-indicator.service —
 # так репозиторий можно переложить в другой каталог без правки юнита руками.
 [Unit]
-Description=Claude usage indicator — GNOME-панель лимитов Claude Code
+Description=Claude usage indicator — GNOME panel for Claude Code limits
 # graphical-session.target — таргет живого GUI-сеанса пользователя; без него
 # AppIndicator не находит шину indicator и падает на старте.
 After=graphical-session.target
