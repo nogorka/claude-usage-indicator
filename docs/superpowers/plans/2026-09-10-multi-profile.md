@@ -283,6 +283,15 @@ def profile_sort_key(profile_id: str) -> tuple[int, str]:
     return (0 if profile_id == DEFAULT_ID else 1, profile_id)
 ```
 
+> **Правило снятого правила (фикс-раунд 2).** Санитизация выше — `.lower()` (не ASCII)
+> и `.strip("-") or DEFAULT_ID` без хэша — заморожена этим шагом, но заморозка снята
+> фикс-раундом 2: правило неинъективно (`~/.claude-личный` и `~/.claude-работа`
+> схлопывались в один `default`). Действующее правило — «слаг + хэш там, где слаг
+> теряет информацию» — описано в `.superpowers/sdd/2026-09-10-multi-profile/final-fix-round-2-brief.md`
+> и реализовано в текущем `src/claude_usage_indicator/profiles.py`; тесты выше и
+> тестовый код `profile_id()` в шаге 5.3 ниже показывают код на момент раунда 1,
+> а не сегодняшний.
+
 - [x] **Шаг 1.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_profiles.py' -v`
@@ -909,6 +918,10 @@ state_path() {
     if [[ -n "${HOME:-}" ]]; then printf '%s/.local/state/claude-usage/%s.json' "$HOME" "$id"; return; fi
 }
 ```
+
+> **`profile_id()` показан на момент раунда 1** — без разрешения симлинков (фикс-раунд
+> 1) и без слага-с-хэшем (фикс-раунд 2). Живая версия — в `bin/claude-statusline.sh`,
+> правило описано в `.superpowers/sdd/2026-09-10-multi-profile/final-fix-round-2-brief.md`.
 
 Шаблон `mktemp "$dir/latest.json.XXXXXX"` в `write_state` заменяется на
 `mktemp "$dir/.tmp.XXXXXX"`: имя `latest.json.*` теперь совпало бы с маской `*.json`
