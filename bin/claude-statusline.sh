@@ -222,7 +222,10 @@ profile_id() {
     local dir="${CLAUDE_CONFIG_DIR:-}"
     dir="${dir//$'\n'/}"
     if [[ -z "$dir" ]]; then printf 'default'; return; fi
-    while [[ "$dir" == */ ]]; do dir="${dir%/}"; done
+    # Стоп на "/", а не на пустой строке: путь из одних слэшей срезается до
+    # корня, как это делает Path.resolve() на python-стороне, а не до "",
+    # которая хэшировалась бы в другой id.
+    while [[ "$dir" == */ && "$dir" != "/" ]]; do dir="${dir%/}"; done
     dir="$(resolve_config_dir "$dir")"
     # "${HOME:-}", не голый $HOME: под set -u вызов без HOME в окружении
     # (env -i без HOME, но с CLAUDE_USAGE_STATE и CLAUDE_CONFIG_DIR) уронит

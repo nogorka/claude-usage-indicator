@@ -585,6 +585,24 @@ print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/$name")"
         assert_eq "$desc [$name]" "$expected" "$produced"
     done
 
+    # CLAUDE_CONFIG_DIR из одних слэшей не имеет basename: срез хвостового "/"
+    # не должен схлопывать его в пустую строку раньше резолва пути (штатно
+    # недостижимо, но инвариант паритета заявлен без исключений).
+    local abs_dir
+    for abs_dir in "/" "//" "///"; do
+        tmp="$(mktemp -d)"
+        run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+            "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$abs_dir"
+        found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+        if [[ -z "$found" ]]; then fail "$desc [$abs_dir]: файл состояния не создан"; continue; fi
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$abs_dir")"
+        assert_eq "$desc [$abs_dir]" "$expected" "$produced"
+    done
+
     # Симлинк на другой каталог: идентификатор обязан выйти из имени цели,
     # а не имени ссылки, иначе один и тот же профиль по двум маршрутам
     # молча раздваивается на два файла состояния (см. фикс-раунд 1).
