@@ -225,6 +225,12 @@ class FormatAgeTests(unittest.TestCase):
         """2.5 минуты: builtin round() банковски округлил бы вниз к 2 (чётное) — тут нужен round-half-up."""
         self.assertEqual(format_age(0, now_epoch=150), "3 minutes ago")
 
+    def test_none_epoch_reads_as_no_data(self) -> None:
+        """state.py осознанно превращает битый/отсутствующий updated_epoch в None (см.
+        test_state.py::test_updated_epoch_missing_becomes_none_without_problem) — format_age
+        обязан прочитать это как «нет данных», а не упасть на `now_epoch - None`."""
+        self.assertEqual(format_age(None, now_epoch=1000), "no data")
+
 
 class _FixedTzMixin:
     """Фиксирует TZ=UTC на время теста, чтобы format_reset не зависел от машины исполнителя."""
@@ -533,6 +539,30 @@ class MenuSectionTests(unittest.TestCase):
 
     def test_no_unreadable_files_produce_no_line(self):
         self.assertIsNone(bar.unreadable_line(()))
+
+    def test_section_lines_render_no_data_instead_of_raising_on_missing_epoch(self):
+        entry = state.ProfileSnapshot(
+            profile_id="personal",
+            label="own",
+            snapshot=_snapshot({}, (), updated_epoch=None),
+        )
+        lines = bar.menu_section_lines(entry, now_epoch=8_000)
+        self.assertEqual(lines[-1], "as of no data")
+
+    def test_multi_profile_menu_build_survives_one_profile_missing_its_epoch(self):
+        """Регрессия: до фикса `now_epoch - None` рвал сборку меню на первом же профиле
+        с updated_epoch=None, и весь тик менюшной пересборки падал (indicator._safe_set_menu
+        глотает исключение и оставляет старое меню навсегда)."""
+        healthy = self._entry()
+        broken = state.ProfileSnapshot(
+            profile_id="broken",
+            label="broken",
+            snapshot=_snapshot({}, (), updated_epoch=None),
+        )
+        lines = []
+        for entry in (healthy, broken):
+            lines.extend(bar.menu_section_lines(entry, now_epoch=8_000))
+        self.assertIn("as of no data", lines)
 
 
 class NoProfilesLineTests(unittest.TestCase):

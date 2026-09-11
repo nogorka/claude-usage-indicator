@@ -40,6 +40,16 @@ class LaunchCommandTests(unittest.TestCase):
             self._assignments(command)["CLAUDE_USAGE_PROFILE_LABEL"], "мой личный"
         )
 
+    def test_config_dir_wins_over_lossy_id_when_sanitization_collapses_to_default(self):
+        """profile_id_from_config_dir может выродить непустой каталог в id "default"
+        (например ~/.claude-личный) — проверять надо реальный каталог, а не производный id,
+        иначе сессия уйдёт без CLAUDE_CONFIG_DIR прямо в настоящий default-аккаунт."""
+        command = launcher.launch_command(
+            self._profile("default", "личный", "/home/u/.claude-личный"), home=Path("/home/u")
+        )
+        assignments = self._assignments(command)
+        self.assertEqual(assignments["CLAUDE_CONFIG_DIR"], "/home/u/.claude-личный")
+
     def test_terminal_is_gnome_terminal(self):
         command = launcher.launch_command(
             self._profile("default", "work", "/home/u/.claude"), home=Path("/home/u")

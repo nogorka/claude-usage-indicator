@@ -190,8 +190,14 @@ def _plural_en(n: int, singular: str) -> str:
     return singular if n == 1 else singular + "s"
 
 
-def format_age(updated_epoch: int, now_epoch: float) -> str:
-    """Человеческое «N назад» на английском с согласованием числительных."""
+def format_age(updated_epoch: int | None, now_epoch: float) -> str:
+    """Человеческое «N назад» на английском с согласованием числительных.
+
+    state.py отдаёт None для битого/отсутствующего/вне-диапазона значения — это
+    осознанное мягкое вырождение (см. test_state.py), а не ошибка вызывающего кода.
+    """
+    if updated_epoch is None:
+        return "no data"
     age_s = max(0.0, now_epoch - updated_epoch)
     if age_s < 60:
         return "just now"

@@ -60,7 +60,7 @@ def discover_profiles(home: Path | None = None) -> list[Profile]:
     found: dict[str, Profile] = {}
     default_dir = base / ".claude"
     if default_dir.is_dir() and (default_dir / ".credentials.json").exists():
-        found["default"] = Profile(id="default", label="default", config_dir=default_dir)
+        found[DEFAULT_ID] = Profile(id=DEFAULT_ID, label=DEFAULT_ID, config_dir=default_dir)
     for candidate in sorted(base.glob(".claude-*")):
         if not candidate.is_dir() or not (candidate / ".credentials.json").exists():
             continue
