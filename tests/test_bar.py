@@ -450,6 +450,76 @@ class MultiProfileBarTests(unittest.TestCase):
         self.assertNotIn("↻", label.split("own")[1])
 
 
+class ProfileChunkLabelTruncationTests(unittest.TestCase):
+    """Метка профиля в панели ограничена по длине — каталог конфига вроде
+    `~/.claude-my-very-long-personal-account-name` не должен растягивать панель.
+    Меню и окно «Подробнее» этому пределу не подчиняются, там места хватает."""
+
+    def _reading_with_label(self, label, has_windows=True):
+        if has_windows:
+            snapshot = state.Snapshot(
+                updated_epoch=8_000,
+                windows={"five_hour": state.Window(percent=42.0, resets_epoch=9_000, label="5h")},
+                order=("five_hour",),
+                extra_usage=None,
+            )
+        else:
+            snapshot = _snapshot({}, ())
+        entry = state.ProfileSnapshot(profile_id="long", label=label, snapshot=snapshot)
+        other = state.ProfileSnapshot(
+            profile_id="short",
+            label="own",
+            snapshot=state.Snapshot(
+                updated_epoch=8_000,
+                windows={"five_hour": state.Window(percent=10.0, resets_epoch=9_000, label="5h")},
+                order=("five_hour",),
+                extra_usage=None,
+            ),
+        )
+        return state.Reading(profiles={"long": entry, "short": other}, unreadable=())
+
+    def test_label_over_sixteen_chars_is_truncated_with_ellipsis(self):
+        long_label = "my-very-long-personal-account-name"  # 36 символов
+        label, _ = bar.panel_state_for(self._reading_with_label(long_label), now_epoch=8_100)
+        self.assertIn(long_label[:15] + "…", label)
+        self.assertNotIn(long_label, label)
+
+    def test_label_exactly_sixteen_chars_is_not_truncated(self):
+        boundary_label = "a" * 16
+        label, _ = bar.panel_state_for(self._reading_with_label(boundary_label), now_epoch=8_100)
+        self.assertIn(boundary_label, label)
+        self.assertNotIn("…", label)
+
+    def test_label_seventeen_chars_is_truncated(self):
+        over_label = "a" * 17
+        label, _ = bar.panel_state_for(self._reading_with_label(over_label), now_epoch=8_100)
+        self.assertIn("a" * 15 + "…", label)
+        self.assertNotIn(over_label, label)
+
+    def test_no_data_branch_also_truncates_the_label(self):
+        long_label = "my-very-long-personal-account-name"
+        label, _ = bar.panel_state_for(
+            self._reading_with_label(long_label, has_windows=False), now_epoch=8_100
+        )
+        self.assertIn(long_label[:15] + "…", label)
+        self.assertNotIn(long_label, label)
+
+    def test_menu_section_lines_keep_the_full_label(self):
+        long_label = "my-very-long-personal-account-name"
+        entry = state.ProfileSnapshot(
+            profile_id="long",
+            label=long_label,
+            snapshot=state.Snapshot(
+                updated_epoch=8_000,
+                windows={"five_hour": state.Window(percent=42.0, resets_epoch=9_000, label="5h")},
+                order=("five_hour",),
+                extra_usage=None,
+            ),
+        )
+        lines = bar.menu_section_lines(entry, now_epoch=8_100)
+        self.assertEqual(lines[0], long_label)
+
+
 class MenuSectionTests(unittest.TestCase):
     def _entry(self):
         return state.ProfileSnapshot(

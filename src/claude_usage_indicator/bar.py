@@ -30,6 +30,12 @@ _STALE_SUFFIX = " (stale)"
 # Легаси-суффикс ` (stale)` остаётся за одиночным режимом: критерий 5 требует от него
 # посимвольного совпадения с сегодняшней строкой.
 _STALE_MARK = "*"
+# Только панель: несколько профилей склеиваются через _SEPARATOR в одну строку без
+# переноса, и метка из имени каталога конфига (~/.claude-<что угодно>) ничем не
+# ограничена. 16 выбрано так, чтобы уместить целиком типовой id вида
+# `<слаг>-<6 символов хэша>`; меню и окно «Подробнее» показывают метку без обрезки —
+# там она в отдельной строке, и место не в дефиците.
+_PANEL_LABEL_MAX_LEN = 16
 
 
 def _round_half_up(value: float) -> int:
@@ -169,6 +175,14 @@ def panel_state_for(reading: Reading, now_epoch: float) -> tuple[str, bool]:
     return label, alarm
 
 
+def _truncate_panel_label(label: str) -> str:
+    """Метка длиннее предела превращается в первые N-1 символов плюс `…`; короче
+    или ровно на границе — не трогается."""
+    if len(label) <= _PANEL_LABEL_MAX_LEN:
+        return label
+    return label[: _PANEL_LABEL_MAX_LEN - 1] + "…"
+
+
 def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
     """Один профиль в метке панели: связывающее окно, процент и компактная метка
     его сброса.
@@ -176,12 +190,13 @@ def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
     Все окна каждого профиля в панель GNOME не помещаются; полная разбивка по всем
     окнам и полное время сброса каждого живут в меню и в окне «Подробнее».
     """
+    label = _truncate_panel_label(entry.label)
     binding = binding_window(entry.snapshot, now_epoch)
     if binding is None:
-        return f"{entry.label} {_NO_DATA_LABEL}"
+        return f"{label} {_NO_DATA_LABEL}"
     key, window = binding
     percent = effective_percent(window, now_epoch)
-    chunk = f"{entry.label} {panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
+    chunk = f"{label} {panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
     if is_stale(entry.snapshot, now_epoch):
         chunk += _STALE_MARK
     reset_marker = format_reset_panel(window.resets_epoch, now_epoch)
