@@ -758,7 +758,7 @@ git commit -m "fix: patch-settings отказывается подменять �
 - Потребляет: контракт схемы 2 из шага 2.
 - Отдаёт: файл `<state_dir>/<id>.json` со `schema: 2` и блоком `profile`.
 
-- [ ] **Шаг 5.1: Написать падающий тест**
+- [x] **Шаг 5.1: Написать падающий тест**
 
 Хелперы берутся только существующие. `run_hook` **не годится**: он жёстко ставит
 `CLAUDE_USAGE_STATE` на фиксированный путь, а `CLAUDE_USAGE_STATE` по контракту
@@ -869,7 +869,7 @@ print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/$name")"
     test_profile_id_matches_python_on_degenerate_names
 ```
 
-- [ ] **Шаг 5.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 5.2: Прогнать и убедиться, что падает**
 
 Запуск: `bash tests/test_statusline.sh`
 Ожидается: FAIL — пишется `latest.json`, `schema` равно 1, ключа `.profile` в файле нет
@@ -877,7 +877,7 @@ print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/$name")"
 она зелёная и сегодня, потому что это прежняя семантика `CLAUDE_USAGE_STATE`, которую
 шаг обязан сохранить; красными в этом тесте остаются сверки `schema` и `profile.id`.
 
-- [ ] **Шаг 5.3: Реализовать минимум**
+- [x] **Шаг 5.3: Реализовать минимум**
 
 ```bash
 # Правило совпадает с profiles.profile_id_from_config_dir: bash пишет, python читает.
@@ -933,12 +933,12 @@ state_path() {
 `config_dir` в файл не пишется: читателю он не нужен ни для чего, а вторая запись пути
 создала бы источник правды, который некому сверять с диском.
 
-- [ ] **Шаг 5.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 5.4: Прогнать и убедиться, что зелено**
 
 Запуск: `bash tests/test_statusline.sh`
 Ожидается: все проверки PASS.
 
-- [ ] **Шаг 5.5: Коммит**
+- [x] **Шаг 5.5: Коммит**
 
 ```bash
 git add bin/claude-statusline.sh tests/test_statusline.sh
@@ -971,7 +971,7 @@ git commit -m "feat: хук пишет файл состояния на проф
 потому что это функции `bar.py` и их потребляют оба шага третьей волны сразу: оставь их
 в шаге 8 — и шаг 9 в своём дереве получит `AttributeError`.
 
-- [ ] **Шаг 6.1: Написать падающий тест**
+- [x] **Шаг 6.1: Написать падающий тест**
 
 ```python
 # добавить в tests/test_bar.py
@@ -1131,13 +1131,13 @@ class MenuSectionTests(unittest.TestCase):
         self.assertIsNone(bar.unreadable_line(()))
 ```
 
-- [ ] **Шаг 6.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 6.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`
 Ожидается: FAIL, `AttributeError: ... has no attribute 'format_reset_panel'`, затем то же
 про `panel_state_for` и про `menu_section_lines`.
 
-- [ ] **Шаг 6.3: Реализовать минимум**
+- [x] **Шаг 6.3: Реализовать минимум**
 
 ```python
 # Два профиля делят ширину панели пополам, поэтому несвежесть помечается одним символом.
@@ -1272,12 +1272,12 @@ def unreadable_line(names: Sequence[str]) -> str | None:
     return "couldn't read: " + ", ".join(names)
 ```
 
-- [ ] **Шаг 6.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 6.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`
 Ожидается: PASS.
 
-- [ ] **Шаг 6.5: Коммит**
+- [x] **Шаг 6.5: Коммит**
 
 ```bash
 git add src/claude_usage_indicator/bar.py tests/test_bar.py
@@ -1298,7 +1298,7 @@ git commit -m "feat: бар и текст меню по профилям"
   `launch(profile: Profile, spawn=subprocess.Popen, home: Path | None = None) -> str | None`
   — возвращает `None` при успехе, текст ошибки для показа человеку при неудаче.
 
-- [ ] **Шаг 7.1: Написать падающий тест**
+- [x] **Шаг 7.1: Написать падающий тест**
 
 Сверять внутреннюю команду подстрокой нельзя, и это не придирка к стилю: `shlex.quote`
 скомпилирован с `re.ASCII` (`/usr/lib/python3.12/shlex.py:321`), поэтому любую строку с
@@ -1380,12 +1380,12 @@ class LaunchTests(unittest.TestCase):
         self.assertIn("gnome-terminal", result)
 ```
 
-- [ ] **Шаг 7.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 7.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_launcher.py' -v`
 Ожидается: FAIL, `ModuleNotFoundError: No module named 'claude_usage_indicator.launcher'`.
 
-- [ ] **Шаг 7.3: Реализовать минимум**
+- [x] **Шаг 7.3: Реализовать минимум**
 
 ```python
 # src/claude_usage_indicator/launcher.py
@@ -1439,7 +1439,7 @@ def launch(profile: Profile, spawn=subprocess.Popen, home: Path | None = None) -
     return None
 ```
 
-- [ ] **Шаг 7.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 7.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_launcher.py' -v`
 Ожидается: PASS, 6 тестов.
@@ -1449,7 +1449,7 @@ def launch(profile: Profile, spawn=subprocess.Popen, home: Path | None = None) -
 в новом окне переменные могут не дойти. Присваивание внутри самой команды доходит всегда.
 Проверяется это не тестом, а ручной проверкой шага 8.
 
-- [ ] **Шаг 7.5: Коммит**
+- [x] **Шаг 7.5: Коммит**
 
 ```bash
 git add src/claude_usage_indicator/launcher.py tests/test_launcher.py
