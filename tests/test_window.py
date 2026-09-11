@@ -9,11 +9,18 @@ _build_content уже принимает reading/now параметрами — 
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 import unittest
 from unittest.mock import Mock, patch
 
 from claude_usage_indicator import bar, state
+
+# Каталог тестов лежит в sys.path только при запуске через `unittest discover -s tests`;
+# без этой вставки отдельный модуль (`python3 -m unittest tests.test_window`) падает на импорте.
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 import _fake_gtk
 
