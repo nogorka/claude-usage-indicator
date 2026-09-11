@@ -33,10 +33,9 @@ def profile_id_from_config_dir(config_dir: str | os.PathLike[str] | None) -> str
     if not config_dir:
         return DEFAULT_ID
     resolved = _resolve(Path(os.path.expanduser(str(config_dir))))
-    basename = resolved.name
-    if basename == ".claude":
+    if resolved == _resolve(Path.home() / ".claude"):
         return DEFAULT_ID
-    name = basename.lstrip(".").lower()
+    name = resolved.name.lstrip(".").lower()
     if name.startswith(_CLAUDE_PREFIX):
         name = name[len(_CLAUDE_PREFIX):]
     return _UNSAFE.sub("-", name).strip("-") or DEFAULT_ID
@@ -59,7 +58,10 @@ def discover_profiles(home: Path | None = None) -> list[Profile]:
     """
     base = home or Path.home()
     found: dict[str, Profile] = {}
-    for candidate in [base / ".claude", *sorted(base.glob(".claude-*"))]:
+    default_dir = base / ".claude"
+    if default_dir.is_dir() and (default_dir / ".credentials.json").exists():
+        found["default"] = Profile(id="default", label="default", config_dir=default_dir)
+    for candidate in sorted(base.glob(".claude-*")):
         if not candidate.is_dir() or not (candidate / ".credentials.json").exists():
             continue
         profile_id = profile_id_from_config_dir(candidate)

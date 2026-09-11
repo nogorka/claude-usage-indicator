@@ -38,6 +38,9 @@ class ProfileIdTests(unittest.TestCase):
             ["default", "alpha", "personal"],
         )
 
+    def test_arbitrary_claude_directory_is_not_default(self):
+        self.assertEqual(profiles.profile_id_from_config_dir("/tmp/.claude"), "claude")
+
 
 class DiscoverProfilesTests(unittest.TestCase):
     def test_directory_without_credentials_is_not_a_profile(self):
