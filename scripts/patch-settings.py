@@ -69,20 +69,23 @@ def plan_install(settings: dict[str, Any], command: str) -> dict[str, Any] | Non
     if current == expected:
         return None
     if current is not None:
-        raise StatusLineConflict(
-            f"statusLine is already set: {json.dumps(current, ensure_ascii=False)}"
-        )
+        # Содержимое current не идёт в сообщение: command может нести секрет
+        # аргументом (например, токен), а это исключение всплывает в stderr.
+        raise StatusLineConflict("statusLine is already set to a value we didn't write")
     return {**settings, "statusLine": expected}
 
 
 def plan_uninstall(settings: dict[str, Any], command: str) -> dict[str, Any] | None:
     """Новый словарь настроек без нашего statusLine, либо None — менять нечего.
 
-    Чужой statusLine (не тот, что поставил бы install) не трогается: удаление
-    чужой конфигурации — не наша забота, это не откат наших же изменений.
+    Опознание идёт по command (путь нашего хука), а не по точному совпадению
+    всего блока: форма блока менялась (631a9ae добавил refreshInterval), и
+    инсталляции старше этого коммита несут на диске двухключевой вариант.
+    Чужой statusLine (другая command) не трогается: удаление чужой
+    конфигурации — не наша забота, это не откат наших же изменений.
     """
-    expected = _expected_block(command)
-    if settings.get("statusLine") != expected:
+    current = settings.get("statusLine")
+    if not isinstance(current, dict) or current.get("command") != command:
         return None
     return {key: value for key, value in settings.items() if key != "statusLine"}
 
@@ -138,6 +141,7 @@ def _apply(action: str, command: str, settings_path: Path, dry_run: bool) -> int
         new_settings = planner(settings, command)
     except StatusLineConflict as exc:
         print(f"patch-settings: {exc}", file=sys.stderr)
+        print(f"Inspect {settings_path} to see what's there.", file=sys.stderr)
         print("Installation stopped, file untouched.", file=sys.stderr)
         return 1
 
