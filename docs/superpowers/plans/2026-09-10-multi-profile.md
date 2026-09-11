@@ -32,30 +32,30 @@ Ayatana AppIndicator3, bash + jq в хуке, тесты — stdlib `unittest` �
 
 ## Критерии приёмки
 
-- [ ] Готово, когда при двух файлах состояния бар показывает оба профиля со связывающим
+- [x] Готово, когда при двух файлах состояния бар показывает оба профиля со связывающим
       окном каждого и компактной меткой его сброса (`↻HH:MM` в пределах суток, `↻DD.MM`
       дальше, пусто у уже сброшенного окна), подтверждается `PYTHONPATH=src
       /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`.
-- [ ] Готово, когда профиль с `updated_epoch` старше часа помечен в баре суффиксом
+- [x] Готово, когда профиль с `updated_epoch` старше часа помечен в баре суффиксом
       несвежести, а в секции меню несёт строку с датой и временем снимка; подтверждается
       `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`,
       тесты `MultiProfileBarTests.test_stale_profile_is_marked_and_the_fresh_one_is_not`
       и `MenuSectionTests.test_section_lines_name_the_profile_and_every_window`.
-- [ ] Готово, когда окно с `resets_epoch <= now` показывает `0%` и текст «window reset
+- [x] Готово, когда окно с `resets_epoch <= now` показывает `0%` и текст «window reset
       at …», а не сохранённый процент; подтверждается `test_bar.py`.
-- [ ] Готово, когда битый или посторонний `*.json` в каталоге состояния не мешает
+- [x] Готово, когда битый или посторонний `*.json` в каталоге состояния не мешает
       прочитать остальные профили и попадает в список проблем чтения; подтверждается
       `test_state.py`.
-- [ ] Готово, когда при единственном профиле на непросроченных данных строка бара
+- [x] Готово, когда при единственном профиле на непросроченных данных строка бара
       совпадает с сегодняшней посимвольно; подтверждается `PYTHONPATH=src
       /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`, тест
       `MultiProfileBarTests.test_single_profile_renders_exactly_as_before`.
-- [ ] Готово, когда `discover_profiles` находит `~/.claude-personal` с
+- [x] Готово, когда `discover_profiles` находит `~/.claude-personal` с
       `.credentials.json` и не находит каталог без него; подтверждается `test_profiles.py`.
-- [ ] Готово, когда хук, запущенный с `CLAUDE_CONFIG_DIR=<tmp>/.claude-personal`, пишет
+- [x] Готово, когда хук, запущенный с `CLAUDE_CONFIG_DIR=<tmp>/.claude-personal`, пишет
       `personal.json` с блоком `profile` и `schema: 2`; подтверждается
       `bash tests/test_statusline.sh`.
-- [ ] Готово, когда время сброса каждого окна показано у обоих профилей независимо от
+- [x] Готово, когда время сброса каждого окна показано у обоих профилей независимо от
       свежести снимка; подтверждается `PYTHONPATH=src /usr/bin/python3 -m unittest
       discover -s tests -p 'test_bar.py' -v`, тест
       `MenuSectionTests.test_section_lines_carry_a_reset_text_for_every_window`.
@@ -64,7 +64,7 @@ Ayatana AppIndicator3, bash + jq в хуке, тесты — stdlib `unittest` �
       автоматическая часть подтверждается `PYTHONPATH=src /usr/bin/python3 -m unittest
       discover -s tests -p 'test_launcher.py' -v`, доставка переменной до оболочки —
       ручной проверкой 8.4.
-- [ ] Готово, когда полный прогон трёх наборов зелёный.
+- [x] Готово, когда полный прогон трёх наборов зелёный.
 
 Критерия на покрытие тестами здесь нет намеренно: решением владелицы 2026-09-11 числовое
 покрытие снято с требований. Покрытие обеспечивается порядком работы — каждый шаг
