@@ -21,18 +21,16 @@ gi.require_version("AyatanaAppIndicator3", "0.1")
 from gi.repository import GLib, Gtk
 from gi.repository import AyatanaAppIndicator3 as AppIndicator3
 
-from . import bar, state, window
+from . import bar, launcher, profiles, state, window
 
 _APP_ID = "claude-usage-indicator"
 _ICON_NORMAL = "utilities-system-monitor"
 _ICON_ALARM = "dialog-warning"
 _POLL_INTERVAL_S = 10
 _UNIT_NAME = "claude-usage-indicator.service"
-# Снимок для честного «нет данных», когда рендер реального снимка упал:
-# panel_label на пустых windows/order гарантированно не бросает — сам по себе fallback безопасен.
-_RENDER_FAILED_SNAPSHOT = state.Snapshot(
-    updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem="read_error"
-)
+# Пустой каталог для честного «нет данных», когда рендер реального каталога упал:
+# panel_state_for на пустом Reading гарантированно не бросает — сам по себе fallback безопасен.
+_RENDER_FAILED_READING = state.Reading(profiles=MappingProxyType({}), unreadable=())
 
 
 def autostart_enabled() -> bool:
@@ -80,7 +78,7 @@ def on_details() -> None:
 
 
 class Indicator:
-    """Держит AppIndicator3, последний снимок состояния и таймер опроса."""
+    """Держит AppIndicator3, последний прочитанный каталог состояния и таймер опроса."""
 
     def __init__(self) -> None:
         self._indicator = AppIndicator3.Indicator.new(
@@ -108,36 +106,36 @@ class Indicator:
         self._autostart_cached = enabled
 
     def refresh(self) -> None:
-        """Перечитывает файл состояния и пересобирает панель с меню на каждый тик.
+        """Перечитывает каталог состояния и пересобирает панель с меню на каждый тик.
 
         Меню раньше пересобиралось только при смене снимка — но текст его
         пунктов (format_reset/format_age) зависит от текущего времени, а не
         только от снимка, и застывал между сменами данных.
         """
-        snapshot = state.read_state()
-        self._apply(snapshot)
+        reading = state.read_all_states()
+        self._apply(reading)
 
-    def _apply(self, snapshot: state.Snapshot) -> None:
+    def _apply(self, reading: state.Reading) -> None:
         now = time.time()
-        label, alarm = self._safe_panel_state(snapshot, now)
+        label, alarm = self._safe_panel_state(reading, now)
         self._indicator.set_label(label, "")
         status = AppIndicator3.IndicatorStatus.ATTENTION if alarm else AppIndicator3.IndicatorStatus.ACTIVE
         self._indicator.set_status(status)
-        self._safe_set_menu(snapshot, now)
+        self._safe_set_menu(reading, now)
 
-    def _safe_panel_state(self, snapshot: state.Snapshot, now: float) -> tuple[str, bool]:
+    def _safe_panel_state(self, reading: state.Reading, now: float) -> tuple[str, bool]:
         """Рендер не должен убивать таймер опроса: падение — честное «нет данных»."""
         try:
-            return bar.panel_state(snapshot, now)
+            return bar.panel_state_for(reading, now)
         except Exception:
             print('claude-usage-indicator: panel render failed, showing "no data":', file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
-            return bar.panel_state(_RENDER_FAILED_SNAPSHOT, now)
+            return bar.panel_state_for(_RENDER_FAILED_READING, now)
 
-    def _safe_set_menu(self, snapshot: state.Snapshot, now: float) -> None:
+    def _safe_set_menu(self, reading: state.Reading, now: float) -> None:
         """Сборка меню — тоже вынесенный риск: одна плохая запись не должна остановить таймер."""
         try:
-            menu = _build_menu(snapshot, now, self._autostart_cached, self._on_autostart_toggled)
+            menu = _build_menu(reading, now, self._autostart_cached, self._on_autostart_toggled)
         except Exception:
             print("claude-usage-indicator: menu build failed, keeping the old menu:", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
@@ -152,33 +150,19 @@ def _add_static_item(menu: Gtk.Menu, text: str) -> None:
     menu.append(item)
 
 
-def _append_window_section(menu: Gtk.Menu, window: state.Window, now: float) -> None:
-    _add_static_item(menu, window.label)
-    _add_static_item(menu, f"{bar.render_bar(window.percent)} {bar.round_percent(window.percent)}%")
-    _add_static_item(menu, bar.format_reset(window.resets_epoch, now))
+def _append_profile_section(menu: Gtk.Menu, entry: state.ProfileSnapshot, now: float) -> None:
+    """Секция одного профиля: текст целиком собран в bar.menu_section_lines, здесь только
+    строки становятся неактивными пунктами меню."""
+    for line in bar.menu_section_lines(entry, now):
+        _add_static_item(menu, line)
     menu.append(Gtk.SeparatorMenuItem())
 
 
-def _append_extra_usage(menu: Gtk.Menu, extra: state.ExtraUsage) -> None:
-    _add_static_item(menu, f"Extra usage                {bar.round_percent(extra.percent)}%")
-    menu.append(Gtk.SeparatorMenuItem())
-
-
-def _append_problem_hint(menu: Gtk.Menu, snapshot: state.Snapshot) -> None:
-    """Когда окон нет, объясняет почему: «ещё не спрашивали» и «файл битый» иначе неотличимы."""
-    if snapshot.windows:
-        return
-    text = bar.problem_text(snapshot.problem)
+def _append_unreadable(menu: Gtk.Menu, reading: state.Reading) -> None:
+    text = bar.unreadable_line(reading.unreadable)
     if text is not None:
         _add_static_item(menu, text)
         menu.append(Gtk.SeparatorMenuItem())
-
-
-def _append_age(menu: Gtk.Menu, snapshot: state.Snapshot, now: float) -> None:
-    if snapshot.updated_epoch is None:
-        _add_static_item(menu, "no data")
-    else:
-        _add_static_item(menu, f"data {bar.format_age(snapshot.updated_epoch, now)}")
 
 
 def _append_autostart_toggle(menu: Gtk.Menu, autostart_state: bool, on_toggled: Callable[[bool], None]) -> None:
@@ -194,18 +178,43 @@ def _append_action_item(menu: Gtk.Menu, text: str, on_activate: Callable[[], Non
     menu.append(item)
 
 
+def _on_launch(profile: profiles.Profile) -> None:
+    """Клик по пункту запуска. Ошибку логирует сам launcher.launch — здесь только диалог
+    для человека: молчаливый провал кнопки неотличим от «ничего не произошло»."""
+    error = launcher.launch(profile)
+    if error is not None:
+        _show_launch_error(error)
+
+
+def _show_launch_error(text: str) -> None:
+    dialog = Gtk.MessageDialog(
+        transient_for=None,
+        flags=0,
+        message_type=Gtk.MessageType.ERROR,
+        buttons=Gtk.ButtonsType.OK,
+        text=text,
+    )
+    dialog.run()
+    dialog.destroy()
+
+
+def _append_launch_items(menu: Gtk.Menu, discovered: list[profiles.Profile]) -> None:
+    """Пункты запуска строятся по профилям с диска, а не по файлам состояния: у только что
+    заведённого профиля файла состояния ещё нет, а кнопка нужна сразу."""
+    for profile in discovered:
+        _append_action_item(menu, f"Open Claude — {profile.label}", lambda profile=profile: _on_launch(profile))
+
+
 def _build_menu(
-    snapshot: state.Snapshot, now: float, autostart_state: bool, on_autostart_toggled: Callable[[bool], None]
+    reading: state.Reading, now: float, autostart_state: bool, on_autostart_toggled: Callable[[bool], None]
 ) -> Gtk.Menu:
-    """Меню собирается заново на каждый тик: набор окон (model:*) не фиксирован, и текст
-    части пунктов зависит от текущего времени (см. Indicator.refresh)."""
+    """Меню собирается заново на каждый тик: набор профилей и окон (model:*) не
+    фиксирован, и текст части пунктов зависит от текущего времени (см. Indicator.refresh)."""
     menu = Gtk.Menu()
-    for key in snapshot.order:
-        _append_window_section(menu, snapshot.windows[key], now)
-    _append_problem_hint(menu, snapshot)
-    if snapshot.extra_usage is not None:
-        _append_extra_usage(menu, snapshot.extra_usage)
-    _append_age(menu, snapshot, now)
+    for profile_id in sorted(reading.profiles, key=profiles.profile_sort_key):
+        _append_profile_section(menu, reading.profiles[profile_id], now)
+    _append_unreadable(menu, reading)
+    _append_launch_items(menu, profiles.discover_profiles())
     _append_autostart_toggle(menu, autostart_state, on_autostart_toggled)
     _append_action_item(menu, "Details…", on_details)
     menu.append(Gtk.SeparatorMenuItem())
