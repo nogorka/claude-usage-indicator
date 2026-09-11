@@ -535,5 +535,39 @@ class MenuSectionTests(unittest.TestCase):
         self.assertIsNone(bar.unreadable_line(()))
 
 
+class NoProfilesLineTests(unittest.TestCase):
+    """Первый запуск: каталог состояния пуст — ни одного профиля, ни одного мусорного
+    файла. Отличается от «профиль есть, но битый» (unreadable_line) и от «профиль есть,
+    но без лимитов ещё» (menu_section_lines сам это покажет) — здесь каталога как будто
+    не существует вовсе, ровно та же ситуация, что раньше давала problem_text("no_file")."""
+
+    def _profile_entry(self) -> state.ProfileSnapshot:
+        return state.ProfileSnapshot(
+            profile_id="default",
+            label="default",
+            snapshot=_snapshot({}, ()),
+        )
+
+    def test_empty_reading_gets_the_first_run_message(self):
+        reading = state.Reading(profiles={}, unreadable=())
+        self.assertEqual(
+            bar.no_profiles_line(reading),
+            "Claude Code has never run with the hook installed",
+        )
+
+    def test_message_matches_problem_text_no_file(self):
+        """Тот же текст, что problem_text("no_file") — источник один, разойтись не могут."""
+        self.assertEqual(bar.no_profiles_line(state.Reading(profiles={}, unreadable=())), problem_text("no_file"))
+
+    def test_reading_with_a_profile_has_no_line(self):
+        reading = state.Reading(profiles={"default": self._profile_entry()}, unreadable=())
+        self.assertIsNone(bar.no_profiles_line(reading))
+
+    def test_reading_with_only_unreadable_files_has_no_line(self):
+        """Каталог не пуст — файл есть, просто не разобрался; это отдельное сообщение."""
+        reading = state.Reading(profiles={}, unreadable=("broken.json",))
+        self.assertIsNone(bar.no_profiles_line(reading))
+
+
 if __name__ == "__main__":
     unittest.main()

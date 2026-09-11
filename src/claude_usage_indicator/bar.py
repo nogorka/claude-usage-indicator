@@ -290,3 +290,17 @@ def problem_text(problem: str | None) -> str | None:
     if problem is None:
         return None
     return _PROBLEM_MESSAGES.get(problem, _UNKNOWN_PROBLEM_MESSAGE)
+
+
+def no_profiles_line(reading: Reading) -> str | None:
+    """Каталог состояния целиком пуст: ни одного профиля, ни одного нечитаемого файла —
+    первый запуск до того, как хук что-либо записал. None, если каталог не пуст (профиль
+    нашёлся, или хотя бы один файл там есть, просто не разобрался — за то сообщение
+    отвечает unreadable_line).
+
+    Текст берётся из того же места, что problem_text("no_file") для одиночного файла
+    состояния: ситуация та же, просто смотрим на каталог целиком, а не на один путь.
+    """
+    if reading.profiles or reading.unreadable:
+        return None
+    return _PROBLEM_MESSAGES["no_file"]

@@ -100,11 +100,15 @@ def _refresh_content(win: Gtk.Window) -> None:
 
 
 def _build_content(reading: state.Reading, now: float) -> Gtk.Box:
-    """Секция на каждый найденный профиль, в порядке `profile_sort_key`, затем одна
-    строка про файлы, которые не разобрались (если такие есть)."""
+    """Секция на каждый найденный профиль, в порядке `profile_sort_key`; если профилей нет
+    вовсе — строка первого запуска; затем строка про файлы, которые не разобрались (если
+    такие есть)."""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
     for profile_id in sorted(reading.profiles, key=profile_sort_key):
         _append_profile_section(box, reading.profiles[profile_id], now)
+    no_profiles = bar.no_profiles_line(reading)
+    if no_profiles is not None:
+        _add_label(box, no_profiles)
     unreadable = bar.unreadable_line(reading.unreadable)
     if unreadable is not None:
         _add_label(box, unreadable)
