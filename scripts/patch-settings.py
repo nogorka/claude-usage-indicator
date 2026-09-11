@@ -33,6 +33,14 @@ class StatusLineConflict(RuntimeError):
     """statusLine в settings.json занят значением, которое поставили не мы."""
 
 
+class SettingsIsSymlink(RuntimeError):
+    """Цель — символьная ссылка, а запись идёт через временный файл и replace.
+
+    Такая запись заменила бы ссылку обычным файлом, и профили, делящие один
+    settings.json, разъехались бы молча. Правится настоящий файл, не ссылка.
+    """
+
+
 def _expected_block(command: str) -> dict[str, Any]:
     return {"type": "command", "command": command, "refreshInterval": _REFRESH_INTERVAL_S}
 
@@ -113,6 +121,12 @@ def atomic_write(path: Path, data: dict[str, Any]) -> None:
 
 def _apply(action: str, command: str, settings_path: Path, dry_run: bool) -> int:
     """Читает settings.json, планирует правку и — если не dry-run — применяет её."""
+    if settings_path.is_symlink():
+        raise SettingsIsSymlink(
+            f"{settings_path} is a symlink to {settings_path.resolve()}; "
+            f"patch the real file instead: --settings {settings_path.resolve()}"
+        )
+
     try:
         settings = load_settings(settings_path)
     except (OSError, ValueError) as exc:
@@ -155,7 +169,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="only print the plan, don't write anything to disk"
     )
     args = parser.parse_args(argv)
-    return _apply(args.action, args.command, args.settings, args.dry_run)
+    try:
+        return _apply(args.action, args.command, args.settings, args.dry_run)
+    except SettingsIsSymlink as exc:
+        print(f"patch-settings: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

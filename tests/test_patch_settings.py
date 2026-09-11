@@ -150,6 +150,19 @@ class BackupAndAtomicWriteTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
 
 
+class SymlinkProtectionTests(unittest.TestCase):
+    def test_symlinked_settings_is_refused_with_an_explanation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "settings.json"
+            real.write_text("{}", encoding="utf-8")
+            link = Path(tmp) / "linked.json"
+            link.symlink_to(real)
+            with self.assertRaises(patch_settings.SettingsIsSymlink) as caught:
+                patch_settings._apply("install", "/bin/true", link, dry_run=False)
+            self.assertIn(str(real), str(caught.exception))
+            self.assertTrue(link.is_symlink())
+
+
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(_SCRIPT_PATH), *args],
