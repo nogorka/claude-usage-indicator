@@ -177,29 +177,62 @@ def dedup_by_key:
 JQ_EOF
 )"
 
+# Идентификатор профиля из CLAUDE_CONFIG_DIR — правило совпадает с
+# profiles.profile_id_from_config_dir (bash пишет имя файла, python его читает,
+# расхождение значило бы, что один профиль виден в панели как два разных).
+# Две конструкции здесь намеренно неочевидны, «очевидное» упрощение их ломает:
+#   sed -E, а не tr -c: tr заменяет каждый запрещённый байт на дефис, а питоновский
+#   [^a-z0-9_-]+ схлопывает последовательность в один. На «Work  Acct» это дало бы
+#   work--acct против work-acct. Схлопывать всё подряд через tr -s тоже нельзя:
+#   тогда разъедется легитимное имя my--profile, где дефисы разрешены.
+#   Циклы while, а не ${name#-}: снятие префикса убирает ровно один дефис,
+#   а python str.strip("-") — все. На «.claude-!!!» это дало бы «-» против «default».
+profile_id() {
+    local dir="${CLAUDE_CONFIG_DIR:-}"
+    if [[ -z "$dir" ]]; then printf 'default'; return; fi
+    dir="${dir%/}"
+    # "${HOME:-}", не голый $HOME: под set -u вызов без HOME в окружении
+    # (env -i без HOME, но с CLAUDE_USAGE_STATE и CLAUDE_CONFIG_DIR) уронит
+    # разбор параметра раньше, чем сработает любая внешняя обёртка "|| true".
+    if [[ "$dir" == "${HOME:-}/.claude" ]]; then printf 'default'; return; fi
+    local name="${dir##*/}"
+    name="${name#.}"
+    name="${name#claude-}"
+    name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g')"
+    while [[ "$name" == -* ]]; do name="${name#-}"; done
+    while [[ "$name" == *- ]]; do name="${name%-}"; done
+    printf '%s' "${name:-default}"
+}
+
 # Путь файла состояния: CLAUDE_USAGE_STATE (тестируемость) важнее XDG-пути.
 # $HOME читаем через "${HOME:-}" — под set -u голый $HOME на окружении без
-# HOME (напр. cron) уронет разбор параметра с текстом в stderr раньше, чем
+# HOME (напр. cron) уронит разбор параметра с текстом в stderr раньше, чем
 # сработает любая обёртка "|| true" в вызывающем коде. Если не задан и
 # XDG_STATE_HOME, и HOME — печатаем пустую строку: писать состояние всё
 # равно некуда, write_state() эту пустоту ниже явно пропускает.
+# Имя файла — profile_id().json: один профиль = один файл, читатель на
+# python-стороне перечисляет каталог, не полагаясь на фиксированное имя.
 state_path() {
     if [[ -n "${CLAUDE_USAGE_STATE:-}" ]]; then
         printf '%s' "$CLAUDE_USAGE_STATE"
         return
     fi
+    local id; id="$(profile_id)"
     if [[ -n "${XDG_STATE_HOME:-}" ]]; then
-        printf '%s/claude-usage/latest.json' "$XDG_STATE_HOME"
+        printf '%s/claude-usage/%s.json' "$XDG_STATE_HOME" "$id"
         return
     fi
     if [[ -n "${HOME:-}" ]]; then
-        printf '%s/.local/state/claude-usage/latest.json' "$HOME"
+        printf '%s/.local/state/claude-usage/%s.json' "$HOME" "$id"
         return
     fi
 }
 
 # Атомарная запись: mktemp в целевом каталоге (гарантия одной ФС с mv),
 # 0600 выставляется до переименования, mv -f поверх старого файла.
+# Префикс .tmp.* вместо latest.json.*: с файлом на профиль имя латентно
+# совпало бы с маской *.json читателя только по случайности; отдельный
+# префикс исключает эту гонку в принципе.
 write_state() {
     local content="$1"
     local path dir tmp
@@ -209,7 +242,7 @@ write_state() {
     fi
     dir="$(dirname -- "$path")"
     mkdir -p -m 0700 "$dir" 2>/dev/null || return 1
-    tmp="$(mktemp "$dir/latest.json.XXXXXX" 2>/dev/null)" || return 1
+    tmp="$(mktemp "$dir/.tmp.XXXXXX" 2>/dev/null)" || return 1
     chmod 0600 "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
     printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
     mv -f "$tmp" "$path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
@@ -243,9 +276,15 @@ main() {
     local status_line
     status_line="$(printf '%s' "$result" | jq -r '.status_line' 2>/dev/null)" || status_line=""
 
+    # config_dir в файл не пишется: читателю он не нужен ни для чего, а вторая
+    # запись пути создала бы источник правды, который некому сверять с диском.
     local state_json
-    state_json="$(printf '%s' "$result" | jq -c --argjson epoch "$(date +%s)" '
-        {schema: 1, updated_epoch: $epoch, limits: .limits, order: .order}
+    state_json="$(printf '%s' "$result" | jq -c \
+        --argjson epoch "$(date +%s)" \
+        --arg profile_id "$(profile_id)" \
+        --arg profile_label "${CLAUDE_USAGE_PROFILE_LABEL:-$(profile_id)}" '
+        {schema: 2, profile: {id: $profile_id, label: $profile_label},
+         updated_epoch: $epoch, limits: .limits, order: .order}
         + (if has("extra_usage") then {extra_usage: .extra_usage} else {} end)
     ' 2>/dev/null)" || state_json=""
 
