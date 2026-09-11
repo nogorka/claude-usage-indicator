@@ -1,4 +1,6 @@
-"""Окно «Подробнее»: по секции на профиль, текст каждой собирает bar.py.
+"""Окно «Подробнее»: по секции на профиль. Заголовок и возраст снимка — текст из bar.py
+(тот же, что в меню трея); окна лимитов — графические Gtk.LevelBar по данным bar.py,
+а не текстовый ASCII-бар: панель и меню ограничены текстом, у окна есть виджеты.
 
 GTK-код тестами не покрыт по той же причине, что и indicator.py — нужен
 живой X11/Wayland-сеанс. Самодостаточен: читает состояние само через
@@ -130,20 +132,30 @@ def _add_level_bar(box: Gtk.Box, percent: float) -> None:
 
 
 def _append_profile_section(box: Gtk.Box, entry: state.ProfileSnapshot, now: float) -> None:
-    """Секция одного профиля: заголовок, окна и возраст снимка — готовый текст из
-    `bar.menu_section_lines`, тот же, что и в меню трея, — плюс `extra_usage` между окнами
-    и возрастом, которого в этом тексте нет.
+    """Секция одного профиля: заголовок и возраст снимка — готовый текст из
+    `bar.menu_section_lines` (та же строка, что и в меню трея), окна лимитов между ними —
+    графические бары из `bar.window_lines`, а не текстовые строки с ASCII-баром: меню и
+    окно «Подробнее» показывают один снимок, но панель меню — текст, а тут есть настоящие
+    виджеты, и критерий приёмки требует именно их.
 
     `menu_section_lines` всегда кладёт строку возраста последней в списке — единственная,
-    которую добавляет после цикла по окнам, — поэтому она безопасно отделяется срезом.
+    которую добавляет после цикла по окнам, — поэтому она безопасно берётся по индексу -1,
+    без повторной реализации форматирования "as of ...".
     """
     lines = bar.menu_section_lines(entry, now)
-    for line in lines[:-1]:
-        _add_label(box, line)
+    _add_label(box, lines[0])
+    for window_line in bar.window_lines(entry.snapshot, now):
+        _append_window_line(box, window_line)
     if entry.snapshot.extra_usage is not None:
         _append_extra_usage(box, entry.snapshot.extra_usage)
     _add_label(box, lines[-1])
     box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
+
+
+def _append_window_line(box: Gtk.Box, window_line: bar.WindowLine) -> None:
+    _add_label(box, window_line.label)
+    _add_level_bar(box, window_line.percent)
+    _add_label(box, f"{bar.round_percent(window_line.percent)}% · {window_line.reset_text}")
 
 
 def _append_extra_usage(box: Gtk.Box, extra: state.ExtraUsage) -> None:

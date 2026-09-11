@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from .profiles import profile_sort_key
@@ -248,6 +249,30 @@ def format_reset_panel(resets_epoch: int | None, now_epoch: float) -> str:
     return "↻" + reset_dt.strftime("%d.%m")
 
 
+@dataclass(frozen=True)
+class WindowLine:
+    """Один срез окна лимита в текущий момент: ярлык, эффективный процент (не округлённый —
+    округляют вызывающие сами, через `round_percent`) и полный текст времени сброса.
+
+    Общий кирпич для текстовой строки меню (`menu_section_lines`) и графических баров окна
+    «Подробнее» (`window.py`) — оба обязаны показывать один и тот же снимок window-в-window,
+    и это гарантируется тем, что оба читают его отсюда, а не через раздельные копии обхода
+    `_iter_windows`.
+    """
+
+    label: str
+    percent: float
+    reset_text: str
+
+
+def window_lines(snapshot: Snapshot, now_epoch: float) -> list[WindowLine]:
+    """Все окна снимка по `order`, в готовом для отображения виде."""
+    return [
+        WindowLine(panel_key(key, window), percent, format_reset(window.resets_epoch, now_epoch))
+        for key, window, percent in _iter_windows(snapshot, now_epoch)
+    ]
+
+
 def menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]:
     """Секция одного профиля: метка, все окна с процентом и сбросом, возраст снимка.
 
@@ -257,11 +282,8 @@ def menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]:
     """
     snapshot = entry.snapshot
     lines = [entry.label]
-    for key, window, percent in _iter_windows(snapshot, now_epoch):
-        lines.append(
-            f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}% · "
-            f"{format_reset(window.resets_epoch, now_epoch)}"
-        )
+    for wl in window_lines(snapshot, now_epoch):
+        lines.append(f"{wl.label} {render_bar(wl.percent)} {round_percent(wl.percent)}% · {wl.reset_text}")
     lines.append(f"as of {format_age(snapshot.updated_epoch, now_epoch)}")
     return lines
 

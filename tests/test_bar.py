@@ -526,6 +526,62 @@ class ExtraUsageLineTests(unittest.TestCase):
         self.assertEqual(bar.extra_usage_line(extra), f"Extra usage {bar.round_percent(30.5)}%")
 
 
+class WindowLinesTests(unittest.TestCase):
+    """bar.window_lines — общий кирпич для текстовой строки меню (menu_section_lines)
+    и графических баров окна «Подробнее» (window.py): оба читают один и тот же обход
+    _iter_windows через этот тип, порядок и ярлыки гарантированно не разъедутся."""
+
+    def _snapshot_three_windows(self) -> Snapshot:
+        return Snapshot(
+            updated_epoch=1_000,
+            windows={
+                "five_hour": Window(percent=42.3, resets_epoch=9_000, label="5 hours"),
+                "seven_day": Window(percent=55.0, resets_epoch=9_000, label="7 days"),
+                "model:fable": Window(percent=21.0, resets_epoch=9_000, label="Fable"),
+            },
+            order=("five_hour", "seven_day", "model:fable"),
+            extra_usage=None,
+        )
+
+    def test_returns_one_entry_per_window_in_order_with_panel_key_labels(self) -> None:
+        lines = bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        self.assertEqual([wl.label for wl in lines], ["5h", "7d", "Fable"])
+
+    def test_percent_is_the_raw_effective_percent_not_pre_rounded(self) -> None:
+        lines = bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        self.assertEqual(lines[0].percent, 42.3)
+
+    def test_reset_text_matches_format_reset_for_the_same_window(self) -> None:
+        lines = bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        self.assertEqual(lines[2].reset_text, format_reset(9_000, now_epoch=1_000))
+
+    def test_no_windows_returns_an_empty_list(self) -> None:
+        self.assertEqual(bar.window_lines(_snapshot({}, ()), now_epoch=1_000), [])
+
+    def test_expired_window_reports_zero_effective_percent(self) -> None:
+        snapshot = Snapshot(
+            updated_epoch=500,
+            windows={"five_hour": Window(percent=87.0, resets_epoch=1_000, label="5 hours")},
+            order=("five_hour",),
+            extra_usage=None,
+        )
+        lines = bar.window_lines(snapshot, now_epoch=2_000)
+        self.assertEqual(lines[0].percent, 0.0)
+
+    def test_menu_section_lines_window_rows_are_built_from_window_lines(self) -> None:
+        """Регрессия против рассинхрона: если бы menu_section_lines когда-нибудь
+        стала форматировать окна отдельной копией цикла, эта проверка первой
+        заметила бы расхождение с тем, что видит окно «Подробнее»."""
+        entry = state.ProfileSnapshot(profile_id="p", label="own", snapshot=self._snapshot_three_windows())
+        lines = bar.menu_section_lines(entry, now_epoch=1_000)
+        window_rows = lines[1:-1]
+        expected = [
+            f"{wl.label} {render_bar(wl.percent)} {bar.round_percent(wl.percent)}% · {wl.reset_text}"
+            for wl in bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        ]
+        self.assertEqual(window_rows, expected)
+
+
 class NoProfilesLineTests(unittest.TestCase):
     """Первый запуск: каталог состояния пуст — ни одного профиля, ни одного мусорного
     файла. Отличается от «профиль есть, но битый» (unreadable_line) и от «профиль есть,

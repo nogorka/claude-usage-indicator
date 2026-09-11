@@ -66,14 +66,50 @@ class ContentCompositionTests(WindowTestCase):
         labels = self._labels(box)
         self.assertLess(labels.index("work"), labels.index("own"))
 
-    def test_section_lines_match_bar_menu_section_lines_minus_the_gap_for_extra_usage(self):
+    def test_header_and_age_lines_come_from_bar_menu_section_lines(self):
         entry = _entry("default", "work", five=61.0, seven=11.0)
         reading = _reading(entry)
         box = self.window._build_content(reading, now=8_100)
-        expected = bar.menu_section_lines(entry, now_epoch=8_100)
+        section_lines = bar.menu_section_lines(entry, now_epoch=8_100)
         labels = self._labels(box)
-        for line in expected:
-            self.assertIn(line, labels)
+        self.assertIn(section_lines[0], labels)
+        self.assertIn(section_lines[-1], labels)
+
+    def test_no_ascii_bar_characters_appear_anywhere_in_the_details_window(self):
+        entry = _entry("default", "work", five=61.0, seven=11.0)
+        reading = _reading(entry)
+        box = self.window._build_content(reading, now=8_100)
+        for text in self._labels(box):
+            self.assertNotIn("▓", text)
+            self.assertNotIn("░", text)
+
+    def test_each_limit_window_gets_its_own_level_bar_matching_the_effective_percent(self):
+        entry = _entry("default", "work", five=61.0, seven=11.0)
+        box = self.window._build_content(_reading(entry), now=8_100)
+        level_bars = [child for child in box.children if isinstance(child, _fake_gtk.LevelBar)]
+        self.assertEqual([lb.value for lb in level_bars], [0.61, 0.11])
+
+    def test_window_label_and_reset_text_are_shown_for_each_limit_window(self):
+        entry = _entry("default", "work", five=61.0, seven=11.0)
+        box = self.window._build_content(_reading(entry), now=8_100)
+        labels = self._labels(box)
+        for wl in bar.window_lines(entry.snapshot, now_epoch=8_100):
+            self.assertIn(wl.label, labels)
+            self.assertTrue(any(wl.reset_text in text for text in labels))
+
+    def test_model_scoped_window_gets_a_level_bar_with_its_own_label(self):
+        snapshot = state.Snapshot(
+            updated_epoch=1_000,
+            windows={"model:fable": state.Window(percent=21.0, resets_epoch=9_000, label="Fable")},
+            order=("model:fable",),
+            extra_usage=None,
+        )
+        entry = state.ProfileSnapshot(profile_id="default", label="work", snapshot=snapshot)
+        box = self.window._build_content(_reading(entry), now=8_100)
+        level_bars = [child for child in box.children if isinstance(child, _fake_gtk.LevelBar)]
+        self.assertEqual(len(level_bars), 1)
+        self.assertAlmostEqual(level_bars[0].value, 0.21)
+        self.assertIn("Fable", self._labels(box))
 
     def test_age_line_is_the_last_label_before_the_separator(self):
         entry = _entry("default", "work")
@@ -93,19 +129,23 @@ class ContentCompositionTests(WindowTestCase):
         self.assertLess(labels.index("Extra usage"), labels.index(age_line))
 
     def test_extra_usage_level_bar_gets_the_clamped_fraction_and_a_rounded_percent_label(self):
+        # extra_usage — не окно лимита, его LevelBar последний: после двух баров окон
+        # five_hour/seven_day, которые теперь тоже рисуются виджетами.
         extra = state.ExtraUsage(percent=31.0, used_credits=None, monthly_limit=None, currency=None)
         entry = _entry("default", "work", extra_usage=extra)
         box = self.window._build_content(_reading(entry), now=8_100)
         level_bars = [child for child in box.children if isinstance(child, _fake_gtk.LevelBar)]
-        self.assertEqual(len(level_bars), 1)
-        self.assertAlmostEqual(level_bars[0].value, 0.31)
+        self.assertAlmostEqual(level_bars[-1].value, 0.31)
         self.assertIn(f"{bar.round_percent(31.0)}%", self._labels(box))
 
-    def test_no_extra_usage_produces_no_extra_usage_label_or_level_bar(self):
+    def test_no_extra_usage_produces_no_extra_usage_label_and_no_extra_level_bar(self):
+        # Без extra_usage бары остаются — по одному на окно лимита (five_hour, seven_day);
+        # отсутствовать должен именно лишний, extra_usage'ный.
         entry = _entry("default", "work", extra_usage=None)
         box = self.window._build_content(_reading(entry), now=8_100)
         self.assertNotIn("Extra usage", self._labels(box))
-        self.assertFalse(any(isinstance(child, _fake_gtk.LevelBar) for child in box.children))
+        level_bars = [child for child in box.children if isinstance(child, _fake_gtk.LevelBar)]
+        self.assertEqual(len(level_bars), len(entry.snapshot.windows))
 
     def test_extra_usage_is_not_shown_twice(self):
         # Меню (indicator.py) вставляет свою текстовую строку "Extra usage NN%" через
