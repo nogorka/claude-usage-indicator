@@ -585,6 +585,28 @@ from claude_usage_indicator.profiles import profile_id_from_config_dir
 print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/.claude-alias")"
         assert_eq "$desc [симлинк]" "$expected" "$produced"
     fi
+
+    # Симлинк, чья цель лежит за несуществующим промежуточным каталогом:
+    # readlink -f требует существования всех компонентов кроме последнего и
+    # падает здесь, python Path.resolve() нестрогий и резолвит цель всегда
+    # (см. фикс-раунд 2) — без -m bash откатывался на имя ссылки вместо
+    # имени цели.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/home"
+    ln -s "nested-missing/.claude-deep-target" "$tmp/home/.claude-alias-deep"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-alias-deep"
+    found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+    if [[ -z "$found" ]]; then
+        fail "$desc [симлинк через несуществующий каталог]: файл состояния не создан"
+    else
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/.claude-alias-deep")"
+        assert_eq "$desc [симлинк через несуществующий каталог]" "$expected" "$produced"
+    fi
 }
 
 main() {
