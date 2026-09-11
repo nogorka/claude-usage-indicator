@@ -646,6 +646,40 @@ print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/.claude-alias-deep")"
     fi
 }
 
+# Перф: profile_id() форкает sha256sum на ветке хэша (лоссовый слаг или
+# совпадение с "default") — за один прогон хука id неизменен, поэтому и
+# форк должен случиться один раз, а не на каждый из трёх вызовов profile_id()
+# (state_path(), profile_label по умолчанию, profile.id в файле состояния).
+# Заглушка sha256sum считает вызовы и делегирует настоящему бинарю, чтобы
+# сам результат хука не изменился.
+test_profile_id_hashes_config_dir_once_per_hook_run() {
+    local desc="profile_id(): sha256sum вызывается один раз за прогон хука"
+    local tmp; tmp="$(mktemp -d)"
+    local stub_dir="$tmp/stubbin"
+    mkdir -p "$stub_dir"
+    local counter="$tmp/sha256_calls"
+    : > "$counter"
+    local real_sha256sum
+    real_sha256sum="$(command -v sha256sum)"
+    cat > "$stub_dir/sha256sum" <<STUB_EOF
+#!/usr/bin/env bash
+printf '1\n' >> "$counter"
+exec "$real_sha256sum" "\$@"
+STUB_EOF
+    chmod +x "$stub_dir/sha256sum"
+
+    # ".claude-default" — basename без "claude-" даёт слаг "default", а он
+    # зарезервирован: profile_id() уходит на ветку хэша, как и на любом
+    # лоссовом слаге.
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-default" \
+        "PATH=$stub_dir:$PATH"
+    assert_common "$desc"
+    local calls
+    calls="$(wc -l < "$counter" | tr -d ' ')"
+    assert_eq "$desc: sha256sum вызван один раз" "1" "$calls"
+}
+
 main() {
     test_both_windows
     test_five_hour_only
@@ -684,6 +718,7 @@ main() {
     test_profile_label_is_sanitized_like_model_display_name
     test_profile_claude_usage_state_overrides_path
     test_profile_id_matches_python_on_degenerate_names
+    test_profile_id_hashes_config_dir_once_per_hook_run
 
     echo "---"
     echo "pass=$pass_count fail=$fail_count"

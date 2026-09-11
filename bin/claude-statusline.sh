@@ -259,6 +259,17 @@ profile_id() {
     fi
 }
 
+# Кэш profile_id() на весь прогон хука: идентификатор зависит только от
+# CLAUDE_CONFIG_DIR/HOME, за один прогон не меняется, а на хэш-ветке
+# profile_id() форкает sha256sum. main() заполняет кэш один раз до первого
+# использования; state_path() при прямом вызове без main() (как из тестов
+# на будущее) досчитывает сама — тут кэш не обязателен, а не пуст только
+# после main().
+# Присваивание внутри самой profile_id() эффекта не дало бы: все три места
+# использования стоят в $( ), это подоболочка, и её переменные в родителя
+# не возвращаются — поэтому кэш заполняется снаружи, в теле main().
+PROFILE_ID_CACHED=""
+
 # Путь файла состояния: CLAUDE_USAGE_STATE (тестируемость) важнее XDG-пути.
 # $HOME читаем через "${HOME:-}" — под set -u голый $HOME на окружении без
 # HOME (напр. cron) уронит разбор параметра с текстом в stderr раньше, чем
@@ -272,7 +283,8 @@ state_path() {
         printf '%s' "$CLAUDE_USAGE_STATE"
         return
     fi
-    local id; id="$(profile_id)"
+    local id="$PROFILE_ID_CACHED"
+    [[ -n "$id" ]] || id="$(profile_id)"
     if [[ -n "${XDG_STATE_HOME:-}" ]]; then
         printf '%s/claude-usage/%s.json' "$XDG_STATE_HOME" "$id"
         return
@@ -314,13 +326,17 @@ main() {
         exit 0
     fi
 
+    # Единственное вычисление profile_id() за весь прогон — дальше state_path()
+    # и оба jq-вызова читают уже готовое значение из PROFILE_ID_CACHED.
+    PROFILE_ID_CACHED="$(profile_id)"
+
     # jq на пустом/из-одних-пробелов вводе тихо возвращает "" с кодом 0
     # (ноль JSON-значений в потоке — ноль применений фильтра), поэтому
     # синтаксической проверкой `jq empty` тут не обойтись: нужен ещё и
     # непустой результат основного фильтра.
     local result
     result="$(printf '%s' "$raw" | jq -c \
-        --arg raw_profile_label "${CLAUDE_USAGE_PROFILE_LABEL:-$(profile_id)}" \
+        --arg raw_profile_label "${CLAUDE_USAGE_PROFILE_LABEL:-$PROFILE_ID_CACHED}" \
         "$JQ_FILTER" 2>/dev/null)" || result=""
     if [[ -z "$result" ]]; then
         exit 0
@@ -341,7 +357,7 @@ main() {
     local state_json
     state_json="$(printf '%s' "$result" | jq -c \
         --argjson epoch "$(date +%s)" \
-        --arg profile_id "$(profile_id)" '
+        --arg profile_id "$PROFILE_ID_CACHED" '
         {schema: 2, profile: {id: $profile_id, label: .profile_label},
          updated_epoch: $epoch, limits: .limits, order: .order}
         + (if has("extra_usage") then {extra_usage: .extra_usage} else {} end)
