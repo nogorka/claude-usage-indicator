@@ -9,9 +9,11 @@ statusLine: обе стороны рисуют один и тот же бар и
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
-from .state import FIVE_HOUR, SEVEN_DAY, Snapshot, Window
+from .profiles import profile_sort_key
+from .state import FIVE_HOUR, SEVEN_DAY, ProfileSnapshot, Reading, Snapshot, Window
 
 _FULL_CELL = "▓"
 _EMPTY_CELL = "░"
@@ -20,6 +22,10 @@ _NO_DATA_LABEL = "Claude: no data"
 _PANEL_SHORT_KEYS = {FIVE_HOUR: "5h", SEVEN_DAY: "7d"}
 _ATTENTION_PREFIX = "⚠ "
 _STALE_SUFFIX = " (stale)"
+# Два профиля делят ширину панели пополам, поэтому несвежесть помечается одним символом.
+# Легаси-суффикс ` (stale)` остаётся за одиночным режимом: критерий 5 требует от него
+# посимвольного совпадения с сегодняшней строкой.
+_STALE_MARK = "*"
 
 
 def _round_half_up(value: float) -> int:
@@ -63,6 +69,23 @@ def effective_percent(window: Window, now_epoch: float) -> float:
     а старое число — нет.
     """
     return 0.0 if is_expired(window, now_epoch) else window.percent
+
+
+def binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] | None:
+    """Окно, которое сейчас связывает: с наибольшим эффективным процентом.
+
+    Ничья разрешается порядком из `order`, а не произвольным: метка панели не должна
+    менять окно между тиками при равных числах.
+    """
+    best: tuple[str, Window, float] | None = None
+    for key in snapshot.order:
+        window = snapshot.windows.get(key)
+        if window is None:
+            continue
+        percent = effective_percent(window, now_epoch)
+        if best is None or percent > best[2]:
+            best = (key, window, percent)
+    return (best[0], best[1]) if best is not None else None
 
 
 def panel_label(snapshot: Snapshot, now_epoch: float) -> str:
@@ -110,6 +133,51 @@ def panel_state(snapshot: Snapshot, now_epoch: float) -> tuple[str, bool]:
     return label, alarm
 
 
+def panel_label_no_data() -> str:
+    """Обёртка над `_NO_DATA_LABEL`, чтобы вызывающий код не зависел от приватного имени."""
+    return _NO_DATA_LABEL
+
+
+def panel_state_for(reading: Reading, now_epoch: float) -> tuple[str, bool]:
+    """Текст метки и статус тревоги для всего каталога состояния.
+
+    Один профиль отдаётся в прежний panel_state без изменений: пока второй аккаунт не
+    заведён, панель обязана выглядеть ровно как раньше.
+    """
+    entries = [reading.profiles[key] for key in sorted(reading.profiles, key=profile_sort_key)]
+    if not entries:
+        return panel_label_no_data(), False
+    if len(entries) == 1:
+        return panel_state(entries[0].snapshot, now_epoch)
+    alarm = any(is_alarm(entry.snapshot, now_epoch) for entry in entries)
+    chunks = [_profile_chunk(entry, now_epoch) for entry in entries]
+    label = _SEPARATOR.join(chunks)
+    if alarm:
+        label = _ATTENTION_PREFIX + label
+    return label, alarm
+
+
+def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
+    """Один профиль в метке панели: связывающее окно, процент и компактная метка
+    его сброса.
+
+    Все окна каждого профиля в панель GNOME не помещаются; полная разбивка по всем
+    окнам и полное время сброса каждого живут в меню и в окне «Подробнее».
+    """
+    binding = binding_window(entry.snapshot, now_epoch)
+    if binding is None:
+        return f"{entry.label} {_NO_DATA_LABEL}"
+    key, window = binding
+    percent = effective_percent(window, now_epoch)
+    chunk = f"{entry.label} {panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
+    if is_stale(entry.snapshot, now_epoch):
+        chunk += _STALE_MARK
+    reset_marker = format_reset_panel(window.resets_epoch, now_epoch)
+    if reset_marker:
+        chunk += " " + reset_marker
+    return chunk
+
+
 def _plural_en(n: int, singular: str) -> str:
     """Согласование английских числительных: 1 — singular, всё остальное — regular plural (+s)."""
     return singular if n == 1 else singular + "s"
@@ -143,6 +211,57 @@ def format_reset(resets_epoch: int | None, now_epoch: float) -> str:
     hours, remainder = divmod(int(delta_s), 3600)
     minutes = remainder // 60
     return f"resets at {time_str}, in {hours}h {minutes}m"
+
+
+def format_reset_panel(resets_epoch: int | None, now_epoch: float) -> str:
+    """Компактная метка сброса связывающего окна для панели: `↻HH:MM`/`↻DD.MM`.
+
+    Не полная форма `format_reset` — та несёт «через Nч Mм» и остаётся только в меню,
+    где ширина не ограничена. Здесь ширина панели фиксирована: дальше суток точность
+    падает до дня. Окно уже сброшено или срок неизвестен — пустая строка: следующее
+    время сброса демону неизвестно, пока новая сессия не запишет состояние, а врать
+    нельзя.
+    """
+    if resets_epoch is None or resets_epoch <= now_epoch:
+        return ""
+    reset_dt = datetime.fromtimestamp(resets_epoch, tz=timezone.utc).astimezone()
+    delta_s = resets_epoch - now_epoch
+    if delta_s < 86400:
+        return "↻" + reset_dt.strftime("%H:%M")
+    return "↻" + reset_dt.strftime("%d.%m")
+
+
+def menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]:
+    """Секция одного профиля: метка, все окна с процентом и сбросом, возраст снимка.
+
+    В отличие от панели — там только связывающее окно и компактный маркер его сброса —
+    здесь показываются все окна с полным временем сброса каждого: это то, ради чего меню
+    открывают, и прятать его за выбором одного окна нельзя.
+    """
+    snapshot = entry.snapshot
+    lines = [entry.label]
+    for key in snapshot.order:
+        window = snapshot.windows.get(key)
+        if window is None:
+            continue
+        percent = effective_percent(window, now_epoch)
+        lines.append(
+            f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}% · "
+            f"{format_reset(window.resets_epoch, now_epoch)}"
+        )
+    lines.append(f"as of {format_age(snapshot.updated_epoch, now_epoch)}")
+    return lines
+
+
+def unreadable_line(names: Sequence[str]) -> str | None:
+    """Одна строка про файлы, которые не разобрались. None, если таких нет.
+
+    Молчать о них нельзя: пропавший профиль иначе неотличим от профиля, которым
+    сегодня просто не пользовались.
+    """
+    if not names:
+        return None
+    return "couldn't read: " + ", ".join(names)
 
 
 _PROBLEM_MESSAGES = {

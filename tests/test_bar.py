@@ -379,5 +379,161 @@ class ExpiredWindowTests(unittest.TestCase):
         self.assertNotIn("in 0h", text)
 
 
+class FormatResetPanelTests(_FixedTzMixin, unittest.TestCase):
+    """Компактная метка сброса для панели: HH:MM в пределах суток, DD.MM дальше,
+    пусто после сброса — контраст с полной формой `format_reset` из меню."""
+
+    def test_under_24_hours_shows_time(self) -> None:
+        self.assertEqual(bar.format_reset_panel(18_300, now_epoch=0), "↻05:05")
+
+    def test_exactly_24_hours_shows_date_not_time(self) -> None:
+        self.assertEqual(bar.format_reset_panel(86_400, now_epoch=0), "↻02.01")
+
+    def test_more_than_24_hours_shows_date(self) -> None:
+        self.assertEqual(bar.format_reset_panel(190_800, now_epoch=0), "↻03.01")
+
+    def test_already_reset_has_no_marker(self) -> None:
+        self.assertEqual(bar.format_reset_panel(1_000, now_epoch=2_000), "")
+
+    def test_no_reset_epoch_has_no_marker(self) -> None:
+        self.assertEqual(bar.format_reset_panel(None, now_epoch=0), "")
+
+
+class MultiProfileBarTests(unittest.TestCase):
+    def _reading(self, *entries):
+        return state.Reading(profiles={e.profile_id: e for e in entries}, unreadable=())
+
+    def _entry(self, profile_id, label, five, seven, updated):
+        snapshot = state.Snapshot(
+            updated_epoch=updated,
+            windows={
+                "five_hour": state.Window(percent=five, resets_epoch=9_000, label="5h"),
+                "seven_day": state.Window(percent=seven, resets_epoch=9_000, label="7d"),
+            },
+            order=("five_hour", "seven_day"),
+            extra_usage=None,
+            problem=None,
+        )
+        return state.ProfileSnapshot(profile_id=profile_id, label=label, snapshot=snapshot)
+
+    def test_single_profile_renders_exactly_as_before(self):
+        entry = self._entry("default", "work", 42.0, 27.0, updated=8_000)
+        legacy, legacy_alarm = bar.panel_state(entry.snapshot, now_epoch=8_100)
+        new, new_alarm = bar.panel_state_for(self._reading(entry), now_epoch=8_100)
+        self.assertEqual(new, legacy)
+        self.assertEqual(new_alarm, legacy_alarm)
+
+    def test_two_profiles_each_contribute_their_binding_window(self):
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                self._entry("personal", "own", 11.0, 61.0, updated=8_000),
+            ),
+            now_epoch=8_100,
+        )
+        self.assertIn("work", label)
+        self.assertIn("42%", label)
+        self.assertNotIn("27%", label)
+        self.assertIn("own", label)
+        self.assertIn("61%", label)
+        self.assertNotIn("11%", label)
+        self.assertIn("↻", label)
+
+    def test_default_profile_comes_first_regardless_of_freshness(self):
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("personal", "own", 90.0, 90.0, updated=9_999),
+                self._entry("default", "work", 1.0, 1.0, updated=1),
+            ),
+            now_epoch=8_100,
+        )
+        self.assertLess(label.index("work"), label.index("own"))
+
+    def test_stale_profile_is_marked_and_the_fresh_one_is_not(self):
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                self._entry("personal", "own", 61.0, 11.0, updated=1),
+            ),
+            now_epoch=8_100,
+        )
+        head, tail = label.split("own")
+        self.assertNotIn("*", head.split("work")[1])
+        self.assertIn("*", tail)
+
+    def test_alarm_in_any_profile_raises_the_alarm(self):
+        _, alarm = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 1.0, 1.0, updated=8_000),
+                self._entry("personal", "own", 95.0, 1.0, updated=8_000),
+            ),
+            now_epoch=8_100,
+        )
+        self.assertTrue(alarm)
+
+    def test_no_profiles_at_all_is_the_no_data_label(self):
+        label, alarm = bar.panel_state_for(state.Reading(profiles={}, unreadable=()), now_epoch=1)
+        self.assertEqual(label, bar.panel_label_no_data())
+        self.assertFalse(alarm)
+
+    def test_expired_binding_window_has_no_reset_marker_in_the_panel(self):
+        expired_window = state.Window(percent=87.0, resets_epoch=1_000, label="5h")
+        expired_snapshot = state.Snapshot(
+            updated_epoch=8_000,
+            windows={"five_hour": expired_window},
+            order=("five_hour",),
+            extra_usage=None,
+            problem=None,
+        )
+        expired_entry = state.ProfileSnapshot(
+            profile_id="personal", label="own", snapshot=expired_snapshot
+        )
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                expired_entry,
+            ),
+            now_epoch=8_100,
+        )
+        self.assertNotIn("↻", label.split("own")[1])
+
+
+class MenuSectionTests(unittest.TestCase):
+    def _entry(self):
+        return state.ProfileSnapshot(
+            profile_id="personal",
+            label="own",
+            snapshot=state.Snapshot(
+                updated_epoch=1_000,
+                windows={
+                    "five_hour": state.Window(percent=61.0, resets_epoch=9_000, label="5h"),
+                    "seven_day": state.Window(percent=11.0, resets_epoch=9_000, label="7d"),
+                },
+                order=("five_hour", "seven_day"),
+                extra_usage=None,
+                problem=None,
+            ),
+        )
+
+    def test_section_lines_name_the_profile_and_every_window(self):
+        lines = bar.menu_section_lines(self._entry(), now_epoch=8_000)
+        self.assertEqual(lines[0], "own")
+        self.assertTrue(any("61%" in line for line in lines))
+        self.assertTrue(any("11%" in line for line in lines))
+        self.assertTrue(any("as of" in line for line in lines))
+
+    def test_section_lines_carry_a_reset_text_for_every_window(self):
+        lines = bar.menu_section_lines(self._entry(), now_epoch=8_000)
+        self.assertEqual(sum("reset" in line for line in lines), 2)
+
+    def test_unreadable_files_produce_one_honest_line(self):
+        line = bar.unreadable_line(("broken.json", "junk.json"))
+        self.assertIn("broken.json", line)
+        self.assertIn("junk.json", line)
+
+    def test_no_unreadable_files_produce_no_line(self):
+        self.assertIsNone(bar.unreadable_line(()))
+
+
 if __name__ == "__main__":
     unittest.main()
