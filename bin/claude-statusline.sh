@@ -177,10 +177,29 @@ def dedup_by_key:
 JQ_EOF
 )"
 
+# Разрешает путь до канонической формы (симлинк на цель, "..", повторные "/"),
+# как Path.resolve() на python-стороне. readlink -f требует существования
+# всех компонентов, кроме последнего; на несуществующем дереве молча
+# возвращает пустую строку и код 1 (2>/dev/null глушит его от контракта
+# «тишина в stderr»), а не бросает ошибку. Пустой результат — сигнал взять
+# путь как есть, а не тихо подменить профиль на default.
+resolve_config_dir() {
+    local input="$1" resolved
+    resolved="$(readlink -f -- "$input" 2>/dev/null)" || resolved=""
+    printf '%s' "${resolved:-$input}"
+}
+
 # Идентификатор профиля из CLAUDE_CONFIG_DIR — правило совпадает с
 # profiles.profile_id_from_config_dir (bash пишет имя файла, python его читает,
 # расхождение значило бы, что один профиль виден в панели как два разных).
-# Две конструкции здесь намеренно неочевидны, «очевидное» упрощение их ломает:
+# Идентификатор берётся с разрешённого пути: симлинк на другой каталог обязан
+# дать имя цели, а не имя ссылки, иначе один профиль по двум маршрутам молча
+# раздвоится на два файла состояния. Тем же разрешением снимается повторный
+# хвостовой "/" — readlink -f его убирает по пути.
+# Порядок здесь совпадает с python: сначала нижний регистр всего basename,
+# потом срез ведущих точек (циклом — их может быть больше одной) и префикса
+# claude- (сравнение уже в нижнем регистре, иначе "Claude-" не срежется).
+# Ещё две конструкции неочевидны намеренно, «очевидное» упрощение их ломает:
 #   sed -E, а не tr -c: tr заменяет каждый запрещённый байт на дефис, а питоновский
 #   [^a-z0-9_-]+ схлопывает последовательность в один. На «Work  Acct» это дало бы
 #   work--acct против work-acct. Схлопывать всё подряд через tr -s тоже нельзя:
@@ -190,15 +209,20 @@ JQ_EOF
 profile_id() {
     local dir="${CLAUDE_CONFIG_DIR:-}"
     if [[ -z "$dir" ]]; then printf 'default'; return; fi
-    dir="${dir%/}"
+    while [[ "$dir" == */ ]]; do dir="${dir%/}"; done
+    dir="$(resolve_config_dir "$dir")"
     # "${HOME:-}", не голый $HOME: под set -u вызов без HOME в окружении
     # (env -i без HOME, но с CLAUDE_USAGE_STATE и CLAUDE_CONFIG_DIR) уронит
     # разбор параметра раньше, чем сработает любая внешняя обёртка "|| true".
-    if [[ "$dir" == "${HOME:-}/.claude" ]]; then printf 'default'; return; fi
+    if [[ -n "${HOME:-}" ]]; then
+        local home_claude; home_claude="$(resolve_config_dir "$HOME/.claude")"
+        if [[ "$dir" == "$home_claude" ]]; then printf 'default'; return; fi
+    fi
     local name="${dir##*/}"
-    name="${name#.}"
+    name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
+    while [[ "$name" == .* ]]; do name="${name#.}"; done
     name="${name#claude-}"
-    name="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_-]+/-/g')"
+    name="$(printf '%s' "$name" | sed -E 's/[^a-z0-9_-]+/-/g')"
     while [[ "$name" == -* ]]; do name="${name#-}"; done
     while [[ "$name" == *- ]]; do name="${name%-}"; done
     printf '%s' "${name:-default}"

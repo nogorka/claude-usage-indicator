@@ -22,11 +22,17 @@ assert_eq() {
 # Прогоняет хук на входе $1 в свежем временном каталоге состояния и кладёт
 # результат в глобальные HOOK_*. Свежий каталог на кейс — тесты не текут
 # друг в друга и заодно проверяют автосоздание каталога состояния.
+# CLAUDE_CONFIG_DIR/CLAUDE_USAGE_PROFILE_LABEL сняты явно (env -u), а не
+# просто не заданы здесь: они могут реально сидеть в окружении, где гоняются
+# тесты (у владелицы репозитория второй профиль заведён), и без -u вывод
+# хука тайком перестал бы быть "default" — тесты, ожидающие default,
+# ловили бы это не как свой провал, а как чужую переменную окружения.
 run_hook() {
     local input="$1"
     HOOK_TMP_DIR="$(mktemp -d)"
     HOOK_STATE_FILE="$HOOK_TMP_DIR/state/claude-usage/latest.json"
-    HOOK_STDOUT="$(printf '%s' "$input" | CLAUDE_USAGE_STATE="$HOOK_STATE_FILE" "$HOOK" 2>"$HOOK_TMP_DIR/stderr")"
+    HOOK_STDOUT="$(printf '%s' "$input" | env -u CLAUDE_CONFIG_DIR -u CLAUDE_USAGE_PROFILE_LABEL \
+        CLAUDE_USAGE_STATE="$HOOK_STATE_FILE" "$HOOK" 2>"$HOOK_TMP_DIR/stderr")"
     HOOK_EXIT=$?
     HOOK_STDERR="$(cat "$HOOK_TMP_DIR/stderr")"
 }
@@ -545,7 +551,8 @@ test_profile_claude_usage_state_overrides_path() {
 test_profile_id_matches_python_on_degenerate_names() {
     local desc="профиль: bash и python дают один id"
     local name produced expected tmp found
-    for name in ".claude-!!!" ".claude-Work  Acct" ".claude-my--profile" ".claude-личн"; do
+    for name in ".claude-!!!" ".claude-Work  Acct" ".claude-my--profile" ".claude-личн" \
+                ".Claude-Personal" "..claude-work" ".claude-work//"; do
         tmp="$(mktemp -d)"
         run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
             "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/$name"
@@ -558,6 +565,26 @@ from claude_usage_indicator.profiles import profile_id_from_config_dir
 print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/$name")"
         assert_eq "$desc [$name]" "$expected" "$produced"
     done
+
+    # Симлинк на другой каталог: идентификатор обязан выйти из имени цели,
+    # а не имени ссылки, иначе один и тот же профиль по двум маршрутам
+    # молча раздваивается на два файла состояния (см. фикс-раунд 1).
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/home/.claude-real-work-target"
+    ln -s ".claude-real-work-target" "$tmp/home/.claude-alias"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-alias"
+    found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+    if [[ -z "$found" ]]; then
+        fail "$desc [симлинк]: файл состояния не создан"
+    else
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/.claude-alias")"
+        assert_eq "$desc [симлинк]" "$expected" "$produced"
+    fi
 }
 
 main() {
