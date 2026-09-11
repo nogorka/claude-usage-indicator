@@ -94,6 +94,18 @@ class DiscoverProfilesTests(unittest.TestCase):
             self.assertEqual([p.id for p in found], ["default", "personal"])
             self.assertEqual(found[1].config_dir, home / ".claude-personal")
 
+    def test_id_collision_keeps_first_and_warns_instead_of_silently_dropping(self):
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            for name in (".claude-Work", ".claude-work"):
+                (home / name).mkdir()
+                (home / name / ".credentials.json").write_text("{}", encoding="utf-8")
+            with self.assertLogs(profiles.__name__, level="WARNING") as log:
+                found = profiles.discover_profiles(home)
+            self.assertEqual([p.id for p in found], ["work"])
+            self.assertEqual(found[0].config_dir, home / ".claude-Work")
+            self.assertTrue(any(".claude-work" in message for message in log.output))
+
     def test_credentials_file_is_never_opened(self):
         with TemporaryDirectory() as tmp:
             home = Path(tmp)

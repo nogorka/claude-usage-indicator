@@ -8,11 +8,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import re
 import string
 from dataclasses import dataclass
 from pathlib import Path
+
+_LOG = logging.getLogger(__name__)
 
 DEFAULT_ID = "default"
 _UNSAFE = re.compile(r"[^a-z0-9_-]+")
@@ -83,6 +86,10 @@ def discover_profiles(home: Path | None = None) -> list[Profile]:
     Признак — существование `.credentials.json` внутри каталога. Файл именно
     проверяется на существование и никогда не открывается: индикатор не имеет дела
     с учётными данными.
+
+    Сигнатура намеренно не меняется ради дополнительного канала сигнала: возврат
+    остался списком, чтобы не тянуть правку в GTK-слой, поэтому коллизия id уходит
+    через stdlib `logging`, единственный канал, доступный этому модулю без GTK.
     """
     base = home or Path.home()
     found: dict[str, Profile] = {}
@@ -93,9 +100,14 @@ def discover_profiles(home: Path | None = None) -> list[Profile]:
         if not candidate.is_dir() or not (candidate / ".credentials.json").exists():
             continue
         profile_id = profile_id_from_config_dir(candidate)
-        found.setdefault(
-            profile_id, Profile(id=profile_id, label=profile_id, config_dir=candidate)
-        )
+        existing = found.get(profile_id)
+        if existing is not None:
+            _LOG.warning(
+                "profile id collision on %r: keeping %s, dropping %s",
+                profile_id, existing.config_dir, candidate,
+            )
+            continue
+        found[profile_id] = Profile(id=profile_id, label=profile_id, config_dir=candidate)
     return sorted(found.values(), key=lambda profile: profile_sort_key(profile.id))
 
 
