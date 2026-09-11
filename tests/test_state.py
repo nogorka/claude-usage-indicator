@@ -6,8 +6,10 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
+from claude_usage_indicator import state
 from claude_usage_indicator.state import ExtraUsage, Snapshot, Window, read_state, state_path
 
 
@@ -452,6 +454,95 @@ class StatePathTests(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=True):
             expected = Path.home() / ".local" / "state" / "claude-usage" / "latest.json"
             self.assertEqual(state_path(), expected)
+
+
+def _write_profile_file(directory: Path, name: str, payload: dict) -> None:
+    (directory / name).write_text(json.dumps(payload), encoding="utf-8")
+
+
+_LIMITS = {"five_hour": {"percent": 42.0, "resets_epoch": 1788550200}}
+
+
+class ReadAllStatesTests(unittest.TestCase):
+    def test_schema_1_file_without_profile_block_reads_as_default(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write_profile_file(directory, "latest.json", {"schema": 1, "updated_epoch": 10, "limits": _LIMITS})
+            reading = state.read_all_states(directory)
+            self.assertEqual(set(reading.profiles), {"default"})
+            self.assertEqual(reading.profiles["default"].label, "default")
+
+    def test_schema_2_file_carries_its_own_id_and_label(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write_profile_file(
+                directory,
+                "personal.json",
+                {
+                    "schema": 2,
+                    "profile": {"id": "personal", "label": "own"},
+                    "updated_epoch": 20,
+                    "limits": _LIMITS,
+                },
+            )
+            reading = state.read_all_states(directory)
+            self.assertEqual(reading.profiles["personal"].label, "own")
+
+    def test_duplicate_ids_keep_the_fresher_file(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write_profile_file(directory, "latest.json", {"schema": 1, "updated_epoch": 10, "limits": _LIMITS})
+            _write_profile_file(
+                directory,
+                "default.json",
+                {
+                    "schema": 2,
+                    "profile": {"id": "default", "label": "work"},
+                    "updated_epoch": 99,
+                    "limits": _LIMITS,
+                },
+            )
+            reading = state.read_all_states(directory)
+            self.assertEqual(set(reading.profiles), {"default"})
+            self.assertEqual(reading.profiles["default"].snapshot.updated_epoch, 99)
+
+    def test_broken_file_does_not_hide_the_others(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            (directory / "broken.json").write_text("{not json", encoding="utf-8")
+            _write_profile_file(
+                directory,
+                "personal.json",
+                {
+                    "schema": 2,
+                    "profile": {"id": "personal", "label": "own"},
+                    "updated_epoch": 20,
+                    "limits": _LIMITS,
+                },
+            )
+            reading = state.read_all_states(directory)
+            self.assertEqual(set(reading.profiles), {"personal"})
+            self.assertEqual(list(reading.unreadable), ["broken.json"])
+
+    def test_unknown_schema_version_is_unreadable_not_fatal(self):
+        with TemporaryDirectory() as tmp:
+            directory = Path(tmp)
+            _write_profile_file(directory, "future.json", {"schema": 99, "updated_epoch": 1, "limits": _LIMITS})
+            reading = state.read_all_states(directory)
+            self.assertEqual(reading.profiles, {})
+            self.assertEqual(list(reading.unreadable), ["future.json"])
+
+    def test_missing_directory_yields_empty_reading(self):
+        with TemporaryDirectory() as tmp:
+            reading = state.read_all_states(Path(tmp) / "nope")
+            self.assertEqual(reading.profiles, {})
+            self.assertEqual(list(reading.unreadable), [])
+
+    def test_state_dir_follows_claude_usage_state_parent(self):
+        with unittest.mock.patch.dict(
+            "os.environ", {"CLAUDE_USAGE_STATE": "/tmp/x/custom.json"}, clear=False
+        ):
+            self.assertEqual(state.state_dir(), Path("/tmp/x"))
 
 
 if __name__ == "__main__":

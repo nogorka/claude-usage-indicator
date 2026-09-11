@@ -77,6 +77,21 @@ def state_path() -> Path:
     return base / "claude-usage" / "latest.json"
 
 
+def state_dir() -> Path:
+    """Каталог файлов состояния — по файлу на профиль.
+
+    CLAUDE_USAGE_STATE указывает на файл, а не на каталог: он остаётся точкой
+    переопределения для тестов и ручного пиннинга, и тогда каталогом считается его
+    родитель.
+    """
+    override = os.environ.get("CLAUDE_USAGE_STATE")
+    if override:
+        return Path(override).parent
+    xdg = os.environ.get("XDG_STATE_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
+    return base / "claude-usage"
+
+
 def _empty(problem: str) -> Snapshot:
     return Snapshot(updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem=problem)
 
@@ -187,6 +202,24 @@ def _parse_extra_usage(raw: object) -> ExtraUsage | None:
     )
 
 
+def _parse_payload(payload: dict) -> Snapshot:
+    """Разбирает тело снимка (updated_epoch/limits/order/extra_usage) без валидации schema.
+
+    Общий шов между read_state (файл с валидацией schema==1 и обязательным limits) и
+    read_all_states (каталог со schema из _SUPPORTED_SCHEMAS, где limits может
+    отсутствовать) — дублировать разбор limits/order/extra_usage в обоих местах
+    значило бы рассинхронизировать схемы при следующей правке.
+    """
+    windows = _parse_windows(payload.get("limits"))
+    return Snapshot(
+        updated_epoch=(payload.get("updated_epoch") if _is_valid_epoch(payload.get("updated_epoch")) else None),
+        windows=MappingProxyType(windows),
+        order=tuple(_resolve_order(payload.get("order"), windows)),
+        extra_usage=_parse_extra_usage(payload.get("extra_usage")),
+        problem=None,
+    )
+
+
 def read_state(path: Path | None = None) -> Snapshot:
     """Читает и валидирует файл состояния. Контракт: никогда не бросает исключение."""
     target = path if path is not None else state_path()
@@ -216,11 +249,77 @@ def read_state(path: Path | None = None) -> Snapshot:
     if "limits" not in data:
         return _empty("no_limits")
 
-    windows = _parse_windows(data["limits"])
-    return Snapshot(
-        updated_epoch=(data.get("updated_epoch") if _is_valid_epoch(data.get("updated_epoch")) else None),
-        windows=MappingProxyType(windows),
-        order=tuple(_resolve_order(data.get("order"), windows)),
-        extra_usage=_parse_extra_usage(data.get("extra_usage")),
-        problem=None,
+    return _parse_payload(data)
+
+
+_SUPPORTED_SCHEMAS = (1, 2)
+
+
+@dataclass(frozen=True)
+class ProfileSnapshot:
+    profile_id: str
+    label: str
+    snapshot: Snapshot
+
+
+@dataclass(frozen=True)
+class Reading:
+    """Снимок всего каталога состояния.
+
+    `unreadable` отделён от `problem` внутри снимков намеренно: у файла, который не
+    разобрался, профиля нет по определению, и приписать его проблему чужому профилю
+    значило бы соврать.
+    """
+
+    profiles: Mapping[str, ProfileSnapshot]
+    unreadable: Sequence[str]
+
+
+def read_all_states(directory: Path | None = None) -> Reading:
+    """Все профили каталога. Мусорный файл пропускается, а не роняет чтение целиком:
+    панель с одним битым файлом обязана показывать остальные профили."""
+    base = directory if directory is not None else state_dir()
+    freshest: dict[str, tuple[ProfileSnapshot, int]] = {}
+    unreadable: list[str] = []
+    for path in _state_files(base):
+        parsed = _read_profile_file(path)
+        if parsed is None:
+            unreadable.append(path.name)
+            continue
+        current = freshest.get(parsed.profile_id)
+        age = parsed.snapshot.updated_epoch if parsed.snapshot.updated_epoch is not None else -1
+        if current is None or age > current[1]:
+            freshest[parsed.profile_id] = (parsed, age)
+    return Reading(
+        profiles=MappingProxyType({key: entry for key, (entry, _) in freshest.items()}),
+        unreadable=tuple(unreadable),
     )
+
+
+def _state_files(base: Path) -> list[Path]:
+    try:
+        return sorted(base.glob("*.json"))
+    except OSError:
+        return []
+
+
+def _read_profile_file(path: Path) -> ProfileSnapshot | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") not in _SUPPORTED_SCHEMAS:
+        return None
+    block = payload.get("profile")
+    if not isinstance(block, dict):
+        block = {}
+    profile_id = block.get("id")
+    if not isinstance(profile_id, str) or not profile_id:
+        profile_id = "default"
+    # config_dir в файл не пишется: читателю он не нужен ни для чего. Путь к каталогу
+    # конфигурации берётся с диска в discover_profiles, и запись его ещё и в состояние
+    # создала бы второй источник правды, который некому сверять.
+    label = block.get("label")
+    if not isinstance(label, str) or not label:
+        label = profile_id
+    return ProfileSnapshot(profile_id=profile_id, label=label, snapshot=_parse_payload(payload))
