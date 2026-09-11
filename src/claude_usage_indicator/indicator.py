@@ -94,6 +94,9 @@ class Indicator:
         # бы форк процесса раз в 10 секунд навсегда, включая простой демона.
         # Обновляется по факту переключения пользователем — см. _on_autostart_toggled.
         self._autostart_cached = autostart_enabled()
+        # Тот же мотив, что у _autostart_cached выше: набор профилей на диске меняется
+        # раз в месяцы, а не на каждый тик — см. ProfileCache про TTL вместо mtime.
+        self._profile_cache = profiles.ProfileCache()
         self.refresh()
         GLib.timeout_add_seconds(_POLL_INTERVAL_S, self._on_timeout)
 
@@ -135,7 +138,9 @@ class Indicator:
     def _safe_set_menu(self, reading: state.Reading, now: float) -> None:
         """Сборка меню — тоже вынесенный риск: одна плохая запись не должна остановить таймер."""
         try:
-            menu = _build_menu(reading, now, self._autostart_cached, self._on_autostart_toggled)
+            menu = _build_menu(
+                reading, now, self._autostart_cached, self._on_autostart_toggled, self._profile_cache
+            )
         except Exception:
             print("claude-usage-indicator: menu build failed, keeping the old menu:", file=sys.stderr)
             traceback.print_exc(file=sys.stderr)
@@ -213,15 +218,22 @@ def _append_launch_items(menu: Gtk.Menu, discovered: list[profiles.Profile]) -> 
 
 
 def _build_menu(
-    reading: state.Reading, now: float, autostart_state: bool, on_autostart_toggled: Callable[[bool], None]
+    reading: state.Reading,
+    now: float,
+    autostart_state: bool,
+    on_autostart_toggled: Callable[[bool], None],
+    profile_cache: profiles.ProfileCache,
 ) -> Gtk.Menu:
     """Меню собирается заново на каждый тик: набор профилей и окон (model:*) не
-    фиксирован, и текст части пунктов зависит от текущего времени (см. Indicator.refresh)."""
+    фиксирован, и текст части пунктов зависит от текущего времени (см. Indicator.refresh).
+
+    Список заведённых профилей идёт через profile_cache, а не discover_profiles()
+    напрямую: обход диска на каждый тик того не стоит (см. ProfileCache)."""
     menu = Gtk.Menu()
     for profile_id in sorted(reading.profiles, key=profiles.profile_sort_key):
         _append_profile_section(menu, reading.profiles[profile_id], now)
     _append_unreadable(menu, reading)
-    _append_launch_items(menu, profiles.discover_profiles())
+    _append_launch_items(menu, profile_cache.get(now))
     _append_autostart_toggle(menu, autostart_state, on_autostart_toggled)
     _append_action_item(menu, "Details…", on_details)
     menu.append(Gtk.SeparatorMenuItem())

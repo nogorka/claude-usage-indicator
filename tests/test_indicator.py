@@ -82,9 +82,15 @@ class MenuCompositionTests(IndicatorTestCase):
     """Порядок и содержимое _build_menu — то, что видит пользователь при клике на трей."""
 
     def _build(self, reading, discovered=(), autostart=False, on_toggled=None):
+        # discover_profiles патчится, а не сам ProfileCache: кэш — тонкая обёртка
+        # вокруг discover_profiles, и свежий инстанс на каждый _build не тянет TTL
+        # между тестами (expires_at начинается в прошлом — первый get всегда сканирует).
         with patch.object(profiles, "discover_profiles", return_value=list(discovered)):
-            return self.indicator._build_menu(reading, now=8_100, autostart_state=autostart,
-                                               on_autostart_toggled=on_toggled or (lambda _v: None))
+            return self.indicator._build_menu(
+                reading, now=8_100, autostart_state=autostart,
+                on_autostart_toggled=on_toggled or (lambda _v: None),
+                profile_cache=profiles.ProfileCache(),
+            )
 
     def test_profile_sections_appear_in_profile_sort_key_order(self):
         # id "aaa" идёт раньше "default" алфавитно — наивная сортировка по id ошиблась бы
@@ -205,7 +211,7 @@ class EmptyReadingMenuTests(IndicatorTestCase):
         with patch.object(profiles, "discover_profiles", return_value=[]):
             return self.indicator._build_menu(
                 reading if reading is not None else _reading(), now=1, autostart_state=False,
-                on_autostart_toggled=lambda _v: None,
+                on_autostart_toggled=lambda _v: None, profile_cache=profiles.ProfileCache(),
             )
 
     def test_no_profile_sections_and_no_unreadable_item(self):
@@ -240,6 +246,7 @@ class LaunchClickTests(IndicatorTestCase):
         with patch.object(profiles, "discover_profiles", return_value=[self._profile()]):
             menu = self.indicator._build_menu(
                 _reading(), now=1, autostart_state=False, on_autostart_toggled=lambda _v: None,
+                profile_cache=profiles.ProfileCache(),
             )
         return _find(menu, "Open Claude — Work")
 
@@ -316,12 +323,16 @@ class IndicatorResilienceTests(IndicatorTestCase):
         menu_before = indicator._indicator.menu
         self.assertIsNotNone(menu_before)
         with patch.object(profiles, "discover_profiles", side_effect=OSError("disk gone")):
+            # Кэш ProfileCache уже прогрет предыдущим успешным refresh — обнуляем его,
+            # иначе TTL спрячет патч на discover_profiles за кэшированным результатом.
+            indicator._profile_cache = profiles.ProfileCache()
             indicator.refresh()  # не должно бросить исключение
         self.assertIs(indicator._indicator.menu, menu_before)
 
     def test_on_timeout_keeps_returning_true_after_a_menu_build_failure(self):
         indicator = self._make_indicator(_reading())
         with patch.object(profiles, "discover_profiles", side_effect=OSError("disk gone")):
+            indicator._profile_cache = profiles.ProfileCache()  # см. тест выше про TTL
             self.assertTrue(indicator._on_timeout())
 
     def test_autostart_toggle_callback_persists_the_new_state_and_calls_systemctl(self):

@@ -117,3 +117,30 @@ class DiscoverProfilesTests(unittest.TestCase):
                 self.assertEqual([p.id for p in profiles.discover_profiles(home)], ["default"])
             finally:
                 os.chmod(secret, 0o600)
+
+
+class ProfileCacheTests(unittest.TestCase):
+    def _add_profile(self, home: Path, dirname: str) -> None:
+        (home / dirname).mkdir()
+        (home / dirname / ".credentials.json").write_text("{}", encoding="utf-8")
+
+    def test_repeated_get_within_ttl_does_not_rescan_disk(self):
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._add_profile(home, ".claude-work")
+            cache = profiles.ProfileCache(home)
+            first = cache.get(now=0.0)
+            self._add_profile(home, ".claude-personal")  # заведён уже после первого get
+            second = cache.get(now=59.0)
+            self.assertEqual([p.id for p in second], ["work"])
+            self.assertEqual(first, second)
+
+    def test_get_after_ttl_rescans_disk(self):
+        with TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            self._add_profile(home, ".claude-work")
+            cache = profiles.ProfileCache(home)
+            cache.get(now=0.0)
+            self._add_profile(home, ".claude-personal")
+            refreshed = cache.get(now=60.0)
+            self.assertEqual([p.id for p in refreshed], ["personal", "work"])

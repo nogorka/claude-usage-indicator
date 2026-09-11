@@ -111,6 +111,33 @@ def discover_profiles(home: Path | None = None) -> list[Profile]:
     return sorted(found.values(), key=lambda profile: profile_sort_key(profile.id))
 
 
+_CACHE_TTL_S = 60
+# TTL, а не инвалидация по mtime $HOME: заведение профиля — это mkdir ~/.claude-work,
+# а затем запись маркер-файла ВНУТРЬ него (см. discover_profiles про признак-файл
+# профиля); вторая операция mtime $HOME не меняет, поэтому кэш по mtime залипал бы
+# на «профиля нет» до следующей посторонней записи в домашний каталог.
+
+
+class ProfileCache:
+    """Кэш discover_profiles() с TTL: набор заведённых профилей меняется раз в месяцы,
+    а меню пересобирается каждые 10 секунд — обход диска на каждый тик того не стоит.
+
+    Время приходит параметром, а не читается часами класса: у вызывающего (Indicator)
+    now уже посчитан на тик, а тест без инъекции времени был бы либо медленным, либо флаки.
+    """
+
+    def __init__(self, home: Path | None = None) -> None:
+        self._home = home
+        self._profiles: list[Profile] = []
+        self._expires_at = float("-inf")
+
+    def get(self, now: float) -> list[Profile]:
+        if now >= self._expires_at:
+            self._profiles = discover_profiles(self._home)
+            self._expires_at = now + _CACHE_TTL_S
+        return self._profiles
+
+
 def profile_sort_key(profile_id: str) -> tuple[int, str]:
     """Порядок профилей в интерфейсе: default первым, остальные по алфавиту.
 
