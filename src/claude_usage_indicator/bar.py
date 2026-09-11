@@ -9,7 +9,7 @@ statusLine: обе стороны рисуют один и тот же бар и
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from datetime import datetime, timezone
 
 from .profiles import profile_sort_key
@@ -71,6 +71,21 @@ def effective_percent(window: Window, now_epoch: float) -> float:
     return 0.0 if is_expired(window, now_epoch) else window.percent
 
 
+def _iter_windows(snapshot: Snapshot, now_epoch: float) -> Iterator[tuple[str, Window, float]]:
+    """Окна снимка в порядке `order`, вместе с их effective_percent.
+
+    Общий обход для `binding_window`, `panel_label` и `menu_section_lines`: все три
+    читают окна строго по `order`, пропуская ключи без окна, и `order` остаётся
+    единственным источником и обхода, и tie-break'а — раздельные копии этого цикла
+    расходились бы при следующей правке одной из трёх функций.
+    """
+    for key in snapshot.order:
+        window = snapshot.windows.get(key)
+        if window is None:
+            continue
+        yield key, window, effective_percent(window, now_epoch)
+
+
 def binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] | None:
     """Окно, которое сейчас связывает: с наибольшим эффективным процентом.
 
@@ -78,11 +93,7 @@ def binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] |
     менять окно между тиками при равных числах.
     """
     best: tuple[str, Window, float] | None = None
-    for key in snapshot.order:
-        window = snapshot.windows.get(key)
-        if window is None:
-            continue
-        percent = effective_percent(window, now_epoch)
+    for key, window, percent in _iter_windows(snapshot, now_epoch):
         if best is None or percent > best[2]:
             best = (key, window, percent)
     return (best[0], best[1]) if best is not None else None
@@ -90,14 +101,10 @@ def binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] |
 
 def panel_label(snapshot: Snapshot, now_epoch: float) -> str:
     """Текст метки панели по `order`; extra_usage сюда никогда не попадает (только в меню)."""
-    parts = []
-    for key in snapshot.order:
-        window = snapshot.windows.get(key)
-        if window is None:
-            continue
-        percent = effective_percent(window, now_epoch)
-        text = f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
-        parts.append(text)
+    parts = [
+        f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
+        for key, window, percent in _iter_windows(snapshot, now_epoch)
+    ]
     return _SEPARATOR.join(parts) if parts else _NO_DATA_LABEL
 
 
@@ -240,11 +247,7 @@ def menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]:
     """
     snapshot = entry.snapshot
     lines = [entry.label]
-    for key in snapshot.order:
-        window = snapshot.windows.get(key)
-        if window is None:
-            continue
-        percent = effective_percent(window, now_epoch)
+    for key, window, percent in _iter_windows(snapshot, now_epoch):
         lines.append(
             f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}% · "
             f"{format_reset(window.resets_epoch, now_epoch)}"
