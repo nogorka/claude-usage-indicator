@@ -27,6 +27,7 @@ UNIT_NAME="claude-usage-indicator.service"
 UNIT_TEMPLATE="$REPO_ROOT/systemd/$UNIT_NAME.in"
 UNIT_DIR="$HOME/.config/systemd/user"
 UNIT_DEST="$UNIT_DIR/$UNIT_NAME"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/claude-usage"
 
 # Обёртка мутирующих команд: в dry-run печатает команду вместо выполнения,
 # чтобы план был виден построчно тем же кодом, что реально исполняется.
@@ -80,6 +81,19 @@ enable_unit() {
     run systemctl --user enable --now "$UNIT_NAME"
 }
 
+# Уборка после перехода на схему 2 (файл состояния на профиль): старый
+# общий latest.json рядом со свежим default.json дублировал бы default в
+# панели. Единственный файл состояния не трогается — апгрейд без хотя бы
+# одного запуска хука на схеме 2 не должен стирать последний известный снимок.
+cleanup_legacy_state() {
+    local legacy="$STATE_DIR/latest.json" default_state="$STATE_DIR/default.json"
+    if [[ ! -e "$legacy" || ! -e "$default_state" ]]; then
+        return
+    fi
+    run rm -f "$legacy"
+    echo "legacy state file removed: $legacy"
+}
+
 patch_settings() {
     local args=(install --command "$HOOK_LINK")
     [[ "$DRY_RUN" -eq 1 ]] && args+=(--dry-run)
@@ -92,5 +106,6 @@ patch_settings
 link_hook
 install_unit
 enable_unit
+cleanup_legacy_state
 
 echo "Done. Status: systemctl --user status $UNIT_NAME"
