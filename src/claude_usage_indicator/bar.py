@@ -49,21 +49,40 @@ def panel_key(key: str, window: Window) -> str:
     return _PANEL_SHORT_KEYS.get(key, window.label)
 
 
-def panel_label(snapshot: Snapshot) -> str:
+def is_expired(window: Window, now_epoch: float) -> bool:
+    """Срок окна истёк: сохранённый процент относится к уже закрытому окну."""
+    return window.resets_epoch is not None and window.resets_epoch <= now_epoch
+
+
+def effective_percent(window: Window, now_epoch: float) -> float:
+    """Процент, который честно показать сейчас.
+
+    После сброса сохранённое число заведомо неверно, а ноль — оценка: аккаунтом могли
+    пользоваться с телефона или с claude.ai, и тогда расход больше нуля. Порог
+    достоверности задан владелицей как «правдоподобно», и оценка ему отвечает,
+    а старое число — нет.
+    """
+    return 0.0 if is_expired(window, now_epoch) else window.percent
+
+
+def panel_label(snapshot: Snapshot, now_epoch: float) -> str:
     """Текст метки панели по `order`; extra_usage сюда никогда не попадает (только в меню)."""
     parts = []
     for key in snapshot.order:
         window = snapshot.windows.get(key)
         if window is None:
             continue
-        text = f"{panel_key(key, window)} {render_bar(window.percent)} {round_percent(window.percent)}%"
+        percent = effective_percent(window, now_epoch)
+        text = f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
         parts.append(text)
     return _SEPARATOR.join(parts) if parts else _NO_DATA_LABEL
 
 
-def is_alarm(snapshot: Snapshot, threshold: float = 80.0) -> bool:
+def is_alarm(snapshot: Snapshot, now_epoch: float, threshold: float = 80.0) -> bool:
     """Тревога, если хоть одно окно (включая model:*) достигло порога."""
-    return any(window.percent >= threshold for window in snapshot.windows.values())
+    return any(
+        effective_percent(window, now_epoch) >= threshold for window in snapshot.windows.values()
+    )
 
 
 def is_stale(snapshot: Snapshot, now_epoch: float, max_age_s: int = 3600) -> bool:
@@ -82,8 +101,8 @@ def panel_state(snapshot: Snapshot, now_epoch: float) -> tuple[str, bool]:
     Claude Code не пишет файл, но время идёт) — иначе «устарело» не появляется
     никогда.
     """
-    alarm = is_alarm(snapshot)
-    label = panel_label(snapshot)
+    alarm = is_alarm(snapshot, now_epoch)
+    label = panel_label(snapshot, now_epoch)
     if alarm:
         label = _ATTENTION_PREFIX + label
     if is_stale(snapshot, now_epoch):
@@ -119,7 +138,8 @@ def format_reset(resets_epoch: int | None, now_epoch: float) -> str:
     time_str = reset_dt.strftime("%H:%M")
     delta_s = resets_epoch - now_epoch
     if delta_s <= 0:
-        return f"resets at {time_str}"
+        date_str = reset_dt.strftime("%d.%m")
+        return f"window reset at {time_str} on {date_str}; next window starts with the first session"
     hours, remainder = divmod(int(delta_s), 3600)
     minutes = remainder // 60
     return f"resets at {time_str}, in {hours}h {minutes}m"

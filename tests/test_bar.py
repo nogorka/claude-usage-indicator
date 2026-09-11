@@ -5,6 +5,7 @@ import os
 import time
 import unittest
 
+from claude_usage_indicator import bar, state
 from claude_usage_indicator.bar import (
     _plural_en,
     format_age,
@@ -82,7 +83,7 @@ class PanelLabelTests(unittest.TestCase):
             "seven_day": Window(percent=55.0, resets_epoch=None, label="7 days"),
         }
         snapshot = _snapshot(windows, ("five_hour", "seven_day"))
-        label = panel_label(snapshot)
+        label = panel_label(snapshot, now_epoch=1_000_000)
         self.assertIn("5h ", label)
         self.assertIn("7d ", label)
         self.assertIn(" · ", label)  # разделитель ·
@@ -95,7 +96,7 @@ class PanelLabelTests(unittest.TestCase):
             "model:fable": Window(percent=21.0, resets_epoch=None, label="Fable"),
         }
         snapshot = _snapshot(windows, ("five_hour", "seven_day", "model:fable"))
-        label = panel_label(snapshot)
+        label = panel_label(snapshot, now_epoch=1_000_000)
         self.assertEqual(
             label,
             "5h ▓▓▓░░░░░ 42% · "
@@ -106,29 +107,29 @@ class PanelLabelTests(unittest.TestCase):
     def test_only_one_window_no_separator(self) -> None:
         windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
-        label = panel_label(snapshot)
+        label = panel_label(snapshot, now_epoch=1_000_000)
         self.assertNotIn("·", label)
         self.assertTrue(label.startswith("5h "))
 
     def test_no_windows_at_all_reports_no_data(self) -> None:
         snapshot = _snapshot({}, ())
-        self.assertEqual(panel_label(snapshot), "Claude: no data")
+        self.assertEqual(panel_label(snapshot, now_epoch=1_000_000), "Claude: no data")
 
     def test_problem_snapshot_reports_no_data(self) -> None:
         snapshot = _snapshot({}, (), updated_epoch=None, problem="no_file")
-        self.assertEqual(panel_label(snapshot), "Claude: no data")
+        self.assertEqual(panel_label(snapshot, now_epoch=1_000_000), "Claude: no data")
 
 
 class IsAlarmTests(unittest.TestCase):
     def test_exactly_at_threshold_triggers_alarm(self) -> None:
         windows = {"five_hour": Window(percent=80.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
-        self.assertTrue(is_alarm(snapshot))
+        self.assertTrue(is_alarm(snapshot, now_epoch=1_000_000))
 
     def test_just_below_threshold_does_not_trigger(self) -> None:
         windows = {"five_hour": Window(percent=79.9, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
-        self.assertFalse(is_alarm(snapshot))
+        self.assertFalse(is_alarm(snapshot, now_epoch=1_000_000))
 
     def test_model_scoped_window_can_trigger_alarm(self) -> None:
         """Fable, упёршийся в потолок, это ровно тот случай, ради которого индикатор делается."""
@@ -137,10 +138,10 @@ class IsAlarmTests(unittest.TestCase):
             "model:fable": Window(percent=95.0, resets_epoch=None, label="Fable"),
         }
         snapshot = _snapshot(windows, ("five_hour", "model:fable"))
-        self.assertTrue(is_alarm(snapshot))
+        self.assertTrue(is_alarm(snapshot, now_epoch=1_000_000))
 
     def test_no_windows_never_alarms(self) -> None:
-        self.assertFalse(is_alarm(_snapshot({}, ())))
+        self.assertFalse(is_alarm(_snapshot({}, ()), now_epoch=1_000_000))
 
 
 class IsStaleTests(unittest.TestCase):
@@ -256,7 +257,10 @@ class FormatResetTests(_FixedTzMixin, unittest.TestCase):
     def test_past_reset_has_no_countdown(self) -> None:
         reset_epoch = 10 * 3600
         now_epoch = reset_epoch + 60
-        self.assertEqual(format_reset(reset_epoch, now_epoch), "resets at 10:00")
+        self.assertEqual(
+            format_reset(reset_epoch, now_epoch),
+            "window reset at 10:00 on 01.01; next window starts with the first session",
+        )
 
 
 class FormatResetExtremeTzTests(unittest.TestCase):
@@ -326,6 +330,53 @@ class ProblemTextTests(unittest.TestCase):
         self.assertIsInstance(text, str)
         self.assertTrue(text)
         self.assertNotIn(text, {problem_text(code) for code in self._KNOWN_CODES})
+
+
+class ExpiredWindowTests(unittest.TestCase):
+    def _window(self, percent, resets_epoch):
+        return state.Window(percent=percent, resets_epoch=resets_epoch, label="5h")
+
+    def test_window_past_its_reset_is_expired(self):
+        self.assertTrue(bar.is_expired(self._window(87.0, 1000), now_epoch=2000))
+
+    def test_window_before_its_reset_is_not_expired(self):
+        self.assertFalse(bar.is_expired(self._window(87.0, 3000), now_epoch=2000))
+
+    def test_window_without_reset_epoch_is_never_expired(self):
+        self.assertFalse(bar.is_expired(self._window(87.0, None), now_epoch=2000))
+
+    def test_expired_window_reports_zero_not_the_stale_number(self):
+        self.assertEqual(bar.effective_percent(self._window(87.0, 1000), now_epoch=2000), 0.0)
+
+    def test_live_window_reports_its_own_number(self):
+        self.assertEqual(bar.effective_percent(self._window(87.0, 3000), now_epoch=2000), 87.0)
+
+    def test_expired_window_does_not_raise_the_alarm(self):
+        snapshot = state.Snapshot(
+            updated_epoch=500,
+            windows={"five_hour": self._window(87.0, 1000)},
+            order=("five_hour",),
+            extra_usage=None,
+            problem=None,
+        )
+        self.assertFalse(bar.is_alarm(snapshot, now_epoch=2000))
+
+    def test_expired_window_renders_zero_in_the_panel(self):
+        snapshot = state.Snapshot(
+            updated_epoch=500,
+            windows={"five_hour": self._window(87.0, 1000)},
+            order=("five_hour",),
+            extra_usage=None,
+            problem=None,
+        )
+        self.assertIn("0%", bar.panel_label(snapshot, now_epoch=2000))
+        self.assertNotIn("87%", bar.panel_label(snapshot, now_epoch=2000))
+
+    def test_expired_reset_text_names_the_moment_and_promises_nothing(self):
+        text = bar.format_reset(1000, now_epoch=2000)
+        self.assertIn("window reset at", text)
+        self.assertIn("first session", text)
+        self.assertNotIn("in 0h", text)
 
 
 if __name__ == "__main__":
