@@ -16,7 +16,7 @@ from collections.abc import Iterator, Sequence
 from datetime import datetime, timezone
 
 from .profiles import profile_sort_key
-from .state import FIVE_HOUR, SEVEN_DAY, ProfileSnapshot, Reading, Snapshot, Window
+from .state import FIVE_HOUR, SEVEN_DAY, ExtraUsage, ProfileSnapshot, Reading, Snapshot, Window
 
 _FULL_CELL = "▓"
 _EMPTY_CELL = "░"
@@ -103,7 +103,8 @@ def binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] |
 
 
 def panel_label(snapshot: Snapshot, now_epoch: float) -> str:
-    """Текст метки панели по `order`; extra_usage сюда никогда не попадает (только в меню)."""
+    """Текст метки панели по `order`; extra_usage сюда не попадает — для него отдельная
+    строка в меню (`extra_usage_line`) и виджеты в окне «Подробнее» (`window.py`)."""
     parts = [
         f"{panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
         for key, window, percent in _iter_windows(snapshot, now_epoch)
@@ -263,6 +264,21 @@ def menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]:
         )
     lines.append(f"as of {format_age(snapshot.updated_epoch, now_epoch)}")
     return lines
+
+
+def extra_usage_line(extra: ExtraUsage | None) -> str | None:
+    """Строка «Extra usage NN%» для меню трея; None, если у профиля extra_usage нет.
+
+    Не часть `menu_section_lines`: то текстовый список для двух разных вызывающих
+    (меню и окно «Подробнее»), а окно рисует доп. расход своими виджетами
+    (`window._append_extra_usage`) в этом же месте — между окнами и строкой возраста.
+    Если эту строку внести внутрь `menu_section_lines`, окно покажет её дважды.
+    Ярлык здесь совпадает с ярлыком окна дословно, только текст и процент — одной
+    строкой, а не отдельным виджетом.
+    """
+    if extra is None:
+        return None
+    return f"Extra usage {round_percent(extra.percent)}%"
 
 
 def unreadable_line(names: Sequence[str]) -> str | None:

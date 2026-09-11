@@ -22,7 +22,9 @@ import _fake_gtk
 _TARGET_MODULES = ("claude_usage_indicator.indicator", "claude_usage_indicator.window")
 
 
-def _snapshot(five: float, seven: float, updated: int | None = 1_000) -> state.Snapshot:
+def _snapshot(
+    five: float, seven: float, updated: int | None = 1_000, extra_usage: state.ExtraUsage | None = None
+) -> state.Snapshot:
     return state.Snapshot(
         updated_epoch=updated,
         windows={
@@ -30,12 +32,18 @@ def _snapshot(five: float, seven: float, updated: int | None = 1_000) -> state.S
             "seven_day": state.Window(percent=seven, resets_epoch=9_000, label="7 days"),
         },
         order=("five_hour", "seven_day"),
-        extra_usage=None,
+        extra_usage=extra_usage,
     )
 
 
-def _entry(profile_id: str, label: str, five: float = 10.0, seven: float = 20.0) -> state.ProfileSnapshot:
-    return state.ProfileSnapshot(profile_id=profile_id, label=label, snapshot=_snapshot(five, seven))
+def _entry(
+    profile_id: str,
+    label: str,
+    five: float = 10.0,
+    seven: float = 20.0,
+    extra_usage: state.ExtraUsage | None = None,
+) -> state.ProfileSnapshot:
+    return state.ProfileSnapshot(profile_id=profile_id, label=label, snapshot=_snapshot(five, seven, extra_usage=extra_usage))
 
 
 def _reading(*entries: state.ProfileSnapshot, unreadable: tuple[str, ...] = ()) -> state.Reading:
@@ -87,6 +95,23 @@ class MenuCompositionTests(IndicatorTestCase):
         actual_labels = [item.label for item in menu.items if hasattr(item, "label")]
         for line in expected_lines:
             self.assertIn(line, actual_labels)
+
+    def test_extra_usage_line_appears_between_windows_and_the_age_line(self):
+        # Регрессия против критерия приёмки №3 docs/PLAN.md: переезд на мультипрофильность
+        # выкинул эту строку из меню, хотя окно «Подробнее» её сохранило.
+        extra = state.ExtraUsage(percent=31.0, used_credits=12.4, monthly_limit=40.0, currency="USD")
+        entry = _entry("default", "work", extra_usage=extra)
+        menu = self._build(_reading(entry))
+        labels = [getattr(item, "label", None) for item in menu.items]
+        section_lines = bar.menu_section_lines(entry, now_epoch=8_100)
+        self.assertIn(bar.extra_usage_line(extra), labels)
+        self.assertLess(labels.index(bar.extra_usage_line(extra)), labels.index(section_lines[-1]))
+
+    def test_no_extra_usage_line_for_a_profile_without_extra_usage(self):
+        entry = _entry("default", "work")
+        menu = self._build(_reading(entry))
+        labels = [getattr(item, "label", None) for item in menu.items]
+        self.assertFalse(any(isinstance(label, str) and label.startswith("Extra usage") for label in labels))
 
     def test_static_section_lines_are_not_clickable(self):
         reading = _reading(_entry("default", "work"))

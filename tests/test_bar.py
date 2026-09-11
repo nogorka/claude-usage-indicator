@@ -510,6 +510,22 @@ class MenuSectionTests(unittest.TestCase):
         self.assertIn("as of no data", lines)
 
 
+class ExtraUsageLineTests(unittest.TestCase):
+    """Строка для меню трея — тот же процент, что окно «Подробнее» показывает
+    level bar'ом и отдельной цифрой, здесь одной строкой текста."""
+
+    def test_no_extra_usage_produces_no_line(self):
+        self.assertIsNone(bar.extra_usage_line(None))
+
+    def test_extra_usage_line_names_the_rounded_percent(self):
+        extra = state.ExtraUsage(percent=31.4, used_credits=12.4, monthly_limit=40.0, currency="USD")
+        self.assertEqual(bar.extra_usage_line(extra), "Extra usage 31%")
+
+    def test_rounding_matches_round_percent(self):
+        extra = state.ExtraUsage(percent=30.5, used_credits=None, monthly_limit=None, currency=None)
+        self.assertEqual(bar.extra_usage_line(extra), f"Extra usage {bar.round_percent(30.5)}%")
+
+
 class NoProfilesLineTests(unittest.TestCase):
     """Первый запуск: каталог состояния пуст — ни одного профиля, ни одного мусорного
     файла. Отличается от «профиль есть, но битый» (unreadable_line) и от «профиль есть,

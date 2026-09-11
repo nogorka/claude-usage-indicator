@@ -151,10 +151,17 @@ def _add_static_item(menu: Gtk.Menu, text: str) -> None:
 
 
 def _append_profile_section(menu: Gtk.Menu, entry: state.ProfileSnapshot, now: float) -> None:
-    """Секция одного профиля: текст целиком собран в bar.menu_section_lines, здесь только
-    строки становятся неактивными пунктами меню."""
-    for line in bar.menu_section_lines(entry, now):
+    """Секция одного профиля: окна и возраст — из bar.menu_section_lines, доп. расход —
+    отдельной строкой между ними (см. bar.extra_usage_line про то, почему не внутри
+    menu_section_lines). menu_section_lines всегда кладёт возраст последней строкой —
+    единственной, добавленной после цикла по окнам, — поэтому срез безопасен."""
+    lines = bar.menu_section_lines(entry, now)
+    for line in lines[:-1]:
         _add_static_item(menu, line)
+    extra_line = bar.extra_usage_line(entry.snapshot.extra_usage)
+    if extra_line is not None:
+        _add_static_item(menu, extra_line)
+    _add_static_item(menu, lines[-1])
     menu.append(Gtk.SeparatorMenuItem())
 
 

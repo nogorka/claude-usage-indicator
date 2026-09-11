@@ -107,6 +107,20 @@ class ContentCompositionTests(WindowTestCase):
         self.assertNotIn("Extra usage", self._labels(box))
         self.assertFalse(any(isinstance(child, _fake_gtk.LevelBar) for child in box.children))
 
+    def test_extra_usage_is_not_shown_twice(self):
+        # Меню (indicator.py) вставляет свою текстовую строку "Extra usage NN%" через
+        # bar.extra_usage_line, отдельно от bar.menu_section_lines. Окно строит содержимое
+        # из тех же menu_section_lines плюс собственные виджеты extra_usage — если бы строку
+        # когда-нибудь занесли внутрь menu_section_lines, эта секция получила бы и текстовую
+        # строку из цикла по lines, и виджеты _append_extra_usage поверх неё.
+        extra = state.ExtraUsage(percent=31.0, used_credits=None, monthly_limit=None, currency=None)
+        entry = _entry("default", "work", extra_usage=extra)
+        lines = bar.menu_section_lines(entry, now_epoch=8_100)
+        self.assertFalse(any("Extra usage" in line for line in lines))
+        box = self.window._build_content(_reading(entry), now=8_100)
+        extra_mentions = [text for text in self._labels(box) if "Extra usage" in text]
+        self.assertEqual(extra_mentions, ["Extra usage"])
+
     def test_separator_follows_every_profile_section(self):
         reading = _reading(_entry("default", "work"), _entry("personal", "own"))
         box = self.window._build_content(reading, now=8_100)
