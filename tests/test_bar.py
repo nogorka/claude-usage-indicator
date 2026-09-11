@@ -15,20 +15,18 @@ from claude_usage_indicator.bar import (
     panel_key,
     panel_label,
     panel_state,
-    problem_text,
     render_bar,
 )
 from claude_usage_indicator.state import _MAX_RESETS_EPOCH, Snapshot, Window
 
 
-def _snapshot(windows: dict, order: tuple, updated_epoch=1_000_000, problem=None) -> Snapshot:
+def _snapshot(windows: dict, order: tuple, updated_epoch=1_000_000) -> Snapshot:
     """Собирает Snapshot напрямую, минуя чтение файла — bar.py не знает про state.py-парсинг."""
     return Snapshot(
         updated_epoch=updated_epoch,
         windows=windows,
         order=order,
         extra_usage=None,
-        problem=problem,
     )
 
 
@@ -115,8 +113,8 @@ class PanelLabelTests(unittest.TestCase):
         snapshot = _snapshot({}, ())
         self.assertEqual(panel_label(snapshot, now_epoch=1_000_000), "Claude: no data")
 
-    def test_problem_snapshot_reports_no_data(self) -> None:
-        snapshot = _snapshot({}, (), updated_epoch=None, problem="no_file")
+    def test_snapshot_without_updated_epoch_reports_no_data(self) -> None:
+        snapshot = _snapshot({}, (), updated_epoch=None)
         self.assertEqual(panel_label(snapshot, now_epoch=1_000_000), "Claude: no data")
 
 
@@ -227,7 +225,7 @@ class FormatAgeTests(unittest.TestCase):
 
     def test_none_epoch_reads_as_no_data(self) -> None:
         """state.py осознанно превращает битый/отсутствующий updated_epoch в None (см.
-        test_state.py::test_updated_epoch_missing_becomes_none_without_problem) — format_age
+        test_state.py::test_updated_epoch_missing_becomes_none) — format_age
         обязан прочитать это как «нет данных», а не упасть на `now_epoch - None`."""
         self.assertEqual(format_age(None, now_epoch=1000), "no data")
 
@@ -290,54 +288,6 @@ class FormatResetExtremeTzTests(unittest.TestCase):
         format_reset(_MAX_RESETS_EPOCH, now_epoch=0)
 
 
-class ProblemTextTests(unittest.TestCase):
-    """Человеческие формулировки problem для меню — «нет данных» больше не одно на всё."""
-
-    _KNOWN_CODES = (
-        "no_file",
-        "read_error",
-        "empty_file",
-        "bad_json",
-        "bad_root",
-        "bad_schema",
-        "bad_encoding",
-        "no_limits",
-    )
-
-    def test_none_has_no_text(self) -> None:
-        """problem=None — валидный файл с пустыми limits, объяснять нечего."""
-        self.assertIsNone(problem_text(None))
-
-    def test_every_known_code_has_non_empty_human_text(self) -> None:
-        for code in self._KNOWN_CODES:
-            with self.subTest(code=code):
-                text = problem_text(code)
-                self.assertIsInstance(text, str)
-                self.assertTrue(text)
-
-    def test_no_limits_message_matches_brief_wording(self) -> None:
-        self.assertEqual(
-            problem_text("no_limits"), "numbers will appear after the first request in Claude Code"
-        )
-
-    def test_no_file_message_matches_brief_wording(self) -> None:
-        self.assertEqual(
-            problem_text("no_file"),
-            "Claude Code has never run with the hook installed",
-        )
-
-    def test_known_codes_have_distinct_messages(self) -> None:
-        """Иначе разные проблемы снова неотличимы друг от друга в меню — та же болезнь, что чинили."""
-        messages = {problem_text(code) for code in self._KNOWN_CODES}
-        self.assertEqual(len(messages), len(self._KNOWN_CODES))
-
-    def test_unknown_code_gets_generic_text_not_a_crash(self) -> None:
-        text = problem_text("some_future_hook_version_code")
-        self.assertIsInstance(text, str)
-        self.assertTrue(text)
-        self.assertNotIn(text, {problem_text(code) for code in self._KNOWN_CODES})
-
-
 class ExpiredWindowTests(unittest.TestCase):
     def _window(self, percent, resets_epoch):
         return state.Window(percent=percent, resets_epoch=resets_epoch, label="5h")
@@ -363,7 +313,6 @@ class ExpiredWindowTests(unittest.TestCase):
             windows={"five_hour": self._window(87.0, 1000)},
             order=("five_hour",),
             extra_usage=None,
-            problem=None,
         )
         self.assertFalse(bar.is_alarm(snapshot, now_epoch=2000))
 
@@ -373,7 +322,6 @@ class ExpiredWindowTests(unittest.TestCase):
             windows={"five_hour": self._window(87.0, 1000)},
             order=("five_hour",),
             extra_usage=None,
-            problem=None,
         )
         self.assertIn("0%", bar.panel_label(snapshot, now_epoch=2000))
         self.assertNotIn("87%", bar.panel_label(snapshot, now_epoch=2000))
@@ -418,7 +366,6 @@ class MultiProfileBarTests(unittest.TestCase):
             },
             order=("five_hour", "seven_day"),
             extra_usage=None,
-            problem=None,
         )
         return state.ProfileSnapshot(profile_id=profile_id, label=label, snapshot=snapshot)
 
@@ -489,7 +436,6 @@ class MultiProfileBarTests(unittest.TestCase):
             windows={"five_hour": expired_window},
             order=("five_hour",),
             extra_usage=None,
-            problem=None,
         )
         expired_entry = state.ProfileSnapshot(
             profile_id="personal", label="own", snapshot=expired_snapshot
@@ -517,7 +463,6 @@ class MenuSectionTests(unittest.TestCase):
                 },
                 order=("five_hour", "seven_day"),
                 extra_usage=None,
-                problem=None,
             ),
         )
 
@@ -569,7 +514,7 @@ class NoProfilesLineTests(unittest.TestCase):
     """Первый запуск: каталог состояния пуст — ни одного профиля, ни одного мусорного
     файла. Отличается от «профиль есть, но битый» (unreadable_line) и от «профиль есть,
     но без лимитов ещё» (menu_section_lines сам это покажет) — здесь каталога как будто
-    не существует вовсе, ровно та же ситуация, что раньше давала problem_text("no_file")."""
+    не существует вовсе."""
 
     def _profile_entry(self) -> state.ProfileSnapshot:
         return state.ProfileSnapshot(
@@ -584,10 +529,6 @@ class NoProfilesLineTests(unittest.TestCase):
             bar.no_profiles_line(reading),
             "Claude Code has never run with the hook installed",
         )
-
-    def test_message_matches_problem_text_no_file(self):
-        """Тот же текст, что problem_text("no_file") — источник один, разойтись не могут."""
-        self.assertEqual(bar.no_profiles_line(state.Reading(profiles={}, unreadable=())), problem_text("no_file"))
 
     def test_reading_with_a_profile_has_no_line(self):
         reading = state.Reading(profiles={"default": self._profile_entry()}, unreadable=())

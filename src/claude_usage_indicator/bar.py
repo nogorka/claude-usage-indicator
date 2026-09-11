@@ -273,29 +273,7 @@ def unreadable_line(names: Sequence[str]) -> str | None:
     return "couldn't read: " + ", ".join(names)
 
 
-_PROBLEM_MESSAGES = {
-    "no_file": "Claude Code has never run with the hook installed",
-    "read_error": "couldn't read the state file — check file permissions",
-    "empty_file": "state file is empty — the hook hasn't written data yet",
-    "bad_json": "state file is corrupted — invalid JSON",
-    "bad_root": "state file is corrupted — invalid data structure",
-    "bad_schema": "state file was written by a different hook version",
-    "bad_encoding": "state file is corrupted — invalid encoding",
-    "no_limits": "numbers will appear after the first request in Claude Code",
-}
-_UNKNOWN_PROBLEM_MESSAGE = "couldn't read usage data"
-
-
-def problem_text(problem: str | None) -> str | None:
-    """Человеческое объяснение проблемы для пункта меню; None — данных не было, но и ошибки нет.
-
-    Неизвестный код (будущая версия хука завела новый) получает общую
-    формулировку, а не падение — тот же принцип, что и у разбора файла
-    состояния: непонятное отбрасывается, а не роняет остальное.
-    """
-    if problem is None:
-        return None
-    return _PROBLEM_MESSAGES.get(problem, _UNKNOWN_PROBLEM_MESSAGE)
+_NEVER_RAN_MESSAGE = "Claude Code has never run with the hook installed"
 
 
 def no_profiles_line(reading: Reading) -> str | None:
@@ -303,10 +281,7 @@ def no_profiles_line(reading: Reading) -> str | None:
     первый запуск до того, как хук что-либо записал. None, если каталог не пуст (профиль
     нашёлся, или хотя бы один файл там есть, просто не разобрался — за то сообщение
     отвечает unreadable_line).
-
-    Текст берётся из того же места, что problem_text("no_file") для одиночного файла
-    состояния: ситуация та же, просто смотрим на каталог целиком, а не на один путь.
     """
     if reading.profiles or reading.unreadable:
         return None
-    return _PROBLEM_MESSAGES["no_file"]
+    return _NEVER_RAN_MESSAGE

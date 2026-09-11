@@ -14,11 +14,10 @@
       "extra_usage": {"percent": 31.0, "used_credits": 12.4, "monthly_limit": 40.0, "currency": "USD"}
     }
 
-`read_state` никогда не бросает исключение: любая структурная проблема (файл
-отсутствует, битые байты не в UTF-8, пуст, битый JSON, чужая схема, нет
-`limits`) превращается в Snapshot с заполненным `problem`. Мусор внутри
-отдельного окна или в `extra_usage` не портит остальной снимок — то, что не
-удалось разобрать (включая NaN/Infinity в percent и запредельный
+`read_all_states` никогда не бросает исключение: файл, который не удалось
+прочитать или разобрать, попадает в `unreadable` и не мешает остальным. Мусор
+внутри отдельного окна или в `extra_usage` не портит остальной снимок — то, что
+не удалось разобрать (включая NaN/Infinity в percent и запредельный
 resets_epoch), просто выбрасывается.
 """
 from __future__ import annotations
@@ -64,17 +63,6 @@ class Snapshot:
     windows: Mapping[str, Window]
     order: Sequence[str]
     extra_usage: ExtraUsage | None
-    problem: str | None
-
-
-def state_path() -> Path:
-    """Путь к файлу состояния: CLAUDE_USAGE_STATE важнее XDG_STATE_HOME важнее ~/.local/state."""
-    override = os.environ.get("CLAUDE_USAGE_STATE")
-    if override:
-        return Path(override)
-    xdg = os.environ.get("XDG_STATE_HOME")
-    base = Path(xdg) if xdg else Path.home() / ".local" / "state"
-    return base / "claude-usage" / "latest.json"
 
 
 def state_dir() -> Path:
@@ -90,10 +78,6 @@ def state_dir() -> Path:
     xdg = os.environ.get("XDG_STATE_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "state"
     return base / "claude-usage"
-
-
-def _empty(problem: str) -> Snapshot:
-    return Snapshot(updated_epoch=None, windows=MappingProxyType({}), order=(), extra_usage=None, problem=problem)
 
 
 def _is_plain_number(value: object) -> TypeGuard[int | float]:
@@ -205,10 +189,9 @@ def _parse_extra_usage(raw: object) -> ExtraUsage | None:
 def _parse_payload(payload: dict) -> Snapshot:
     """Разбирает тело снимка (updated_epoch/limits/order/extra_usage) без валидации schema.
 
-    Общий шов между read_state (файл с валидацией schema==1 и обязательным limits) и
-    read_all_states (каталог со schema из _SUPPORTED_SCHEMAS, где limits может
-    отсутствовать) — дублировать разбор limits/order/extra_usage в обоих местах
-    значило бы рассинхронизировать схемы при следующей правке.
+    Валидация схемы остаётся снаружи: отсутствующие или мусорные limits здесь
+    дают пустой снимок, а не ошибку, потому что решение «этот файл вообще не
+    наш» принимается по полю schema, а не по содержимому тела.
     """
     windows = _parse_windows(payload.get("limits"))
     return Snapshot(
@@ -216,40 +199,7 @@ def _parse_payload(payload: dict) -> Snapshot:
         windows=MappingProxyType(windows),
         order=tuple(_resolve_order(payload.get("order"), windows)),
         extra_usage=_parse_extra_usage(payload.get("extra_usage")),
-        problem=None,
     )
-
-
-def read_state(path: Path | None = None) -> Snapshot:
-    """Читает и валидирует файл состояния. Контракт: никогда не бросает исключение."""
-    target = path if path is not None else state_path()
-    try:
-        raw_text = target.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return _empty("no_file")
-    except UnicodeDecodeError:
-        # Подкласс ValueError, а не OSError — падает мимо ловли ниже, если её пропустить.
-        return _empty("bad_encoding")
-    except OSError:
-        # Права, битый симлинк, каталог вместо файла — любая другая I/O-ошибка.
-        return _empty("read_error")
-
-    if not raw_text.strip():
-        return _empty("empty_file")
-
-    try:
-        data = json.loads(raw_text)
-    except json.JSONDecodeError:
-        return _empty("bad_json")
-
-    if not isinstance(data, dict):
-        return _empty("bad_root")
-    if data.get("schema") != 1:
-        return _empty("bad_schema")
-    if "limits" not in data:
-        return _empty("no_limits")
-
-    return _parse_payload(data)
 
 
 _SUPPORTED_SCHEMAS = (1, 2)
@@ -266,9 +216,8 @@ class ProfileSnapshot:
 class Reading:
     """Снимок всего каталога состояния.
 
-    `unreadable` отделён от `problem` внутри снимков намеренно: у файла, который не
-    разобрался, профиля нет по определению, и приписать его проблему чужому профилю
-    значило бы соврать.
+    Нечитаемые файлы держатся отдельным списком, а не приписываются какому-нибудь
+    профилю: у файла, который не разобрался, профиля нет по определению.
     """
 
     profiles: Mapping[str, ProfileSnapshot]
