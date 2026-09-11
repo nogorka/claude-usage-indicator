@@ -122,7 +122,7 @@ Ayatana AppIndicator3, bash + jq в хуке, тесты — stdlib `unittest` �
   `discover_profiles(home: Path | None = None) -> list[Profile]`;
   `profile_sort_key(profile_id: str) -> tuple[int, str]`.
 
-- [ ] **Шаг 1.1: Написать падающий тест**
+- [x] **Шаг 1.1: Написать падающий тест**
 
 ```python
 # tests/test_profiles.py
@@ -195,12 +195,12 @@ class DiscoverProfilesTests(unittest.TestCase):
             self.assertEqual([p.id for p in profiles.discover_profiles(home)], ["default"])
 ```
 
-- [ ] **Шаг 1.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 1.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_profiles.py' -v`
 Ожидается: FAIL, `ModuleNotFoundError: No module named 'claude_usage_indicator.profiles'`.
 
-- [ ] **Шаг 1.3: Реализовать минимум**
+- [x] **Шаг 1.3: Реализовать минимум**
 
 ```python
 # src/claude_usage_indicator/profiles.py
@@ -283,12 +283,12 @@ def profile_sort_key(profile_id: str) -> tuple[int, str]:
     return (0 if profile_id == DEFAULT_ID else 1, profile_id)
 ```
 
-- [ ] **Шаг 1.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 1.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_profiles.py' -v`
 Ожидается: PASS, 11 тестов.
 
-- [ ] **Шаг 1.5: Коммит**
+- [x] **Шаг 1.5: Коммит**
 
 ```bash
 git add src/claude_usage_indicator/profiles.py tests/test_profiles.py
@@ -313,7 +313,7 @@ git commit -m "feat: идентификатор профиля Claude и пои�
   Существующие `Snapshot`, `Window`, `ExtraUsage`, `state_path()`, `read_state()`
   остаются с прежними сигнатурами и прежним поведением.
 
-- [ ] **Шаг 2.1: Написать падающий тест**
+- [x] **Шаг 2.1: Написать падающий тест**
 
 Методы ниже добавляются в существующий класс тестов каталога состояния; импорты — в
 шапку файла, если их там ещё нет.
@@ -417,12 +417,12 @@ class ReadAllStatesTests(unittest.TestCase):
             self.assertEqual(state.state_dir(), Path("/tmp/x"))
 ```
 
-- [ ] **Шаг 2.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 2.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_state.py' -v`
 Ожидается: FAIL, `AttributeError: module 'claude_usage_indicator.state' has no attribute 'read_all_states'`.
 
-- [ ] **Шаг 2.3: Реализовать минимум**
+- [x] **Шаг 2.3: Реализовать минимум**
 
 ```python
 # добавить в src/claude_usage_indicator/state.py
@@ -520,12 +520,12 @@ def _read_profile_file(path: Path) -> ProfileSnapshot | None:
 `limits`/`order`/`extra_usage` нельзя, иначе схемы разъедутся. Поведение и сигнатура
 `read_state()` при этом не меняются — на них держатся существующие 44 теста.
 
-- [ ] **Шаг 2.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 2.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_state.py' -v`
 Ожидается: PASS, 44 прежних теста плюс 7 новых.
 
-- [ ] **Шаг 2.5: Коммит**
+- [x] **Шаг 2.5: Коммит**
 
 ```bash
 git add src/claude_usage_indicator/state.py tests/test_state.py
@@ -558,7 +558,7 @@ git commit -m "feat: схема состояния 2 и чтение катал�
 идут через `panel_state`, который время уже получает; проверить перед правкой:
 `grep -rn 'panel_label\|is_alarm' src/ tests/`.
 
-- [ ] **Шаг 3.1: Написать падающий тест**
+- [x] **Шаг 3.1: Написать падающий тест**
 
 Строка импорта добавляется в шапку `tests/test_bar.py` один раз: файл сегодня
 импортирует конкретные имена, а блоки ниже обращаются через модуль.
@@ -617,13 +617,13 @@ class ExpiredWindowTests(unittest.TestCase):
         self.assertNotIn("in 0h", text)
 ```
 
-- [ ] **Шаг 3.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 3.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`
 Ожидается: FAIL, `AttributeError: module ... has no attribute 'is_expired'`, плюс падения
 `panel_label`/`is_alarm` по числу аргументов.
 
-- [ ] **Шаг 3.3: Реализовать минимум**
+- [x] **Шаг 3.3: Реализовать минимум**
 
 ```python
 # src/claude_usage_indicator/bar.py
@@ -660,7 +660,7 @@ def effective_percent(window: Window, now_epoch: float) -> float:
 Следующее время сброса не вычисляется: пятичасовое окно стартует от первой сессии,
 а не по расписанию, и вычисленное значение было бы выдумкой.
 
-- [ ] **Шаг 3.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 3.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`
 Ожидается: сначала **FAIL** — девять прежних тестов зовут `panel_label`/`is_alarm` без
@@ -669,7 +669,7 @@ def effective_percent(window: Window, now_epoch: float) -> float:
 после чего прогон PASS. Прежние тесты, ожидавшие старый процент у просроченного окна,
 обновляются отдельно — старое поведение и есть починенный баг.
 
-- [ ] **Шаг 3.5: Коммит**
+- [x] **Шаг 3.5: Коммит**
 
 ```bash
 git add src/claude_usage_indicator/bar.py tests/test_bar.py
@@ -688,7 +688,7 @@ git commit -m "fix: просроченное окно больше не пока
 - Потребляет: ничего.
 - Отдаёт: исключение `SettingsIsSymlink(RuntimeError)`.
 
-- [ ] **Шаг 4.1: Написать падающий тест**
+- [x] **Шаг 4.1: Написать падающий тест**
 
 ```python
 # добавить в tests/test_patch_settings.py
@@ -704,12 +704,12 @@ git commit -m "fix: просроченное окно больше не пока
             self.assertTrue(link.is_symlink())
 ```
 
-- [ ] **Шаг 4.2: Прогнать и убедиться, что падает**
+- [x] **Шаг 4.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_patch_settings.py' -v`
 Ожидается: FAIL, `AttributeError: ... has no attribute 'SettingsIsSymlink'`.
 
-- [ ] **Шаг 4.3: Реализовать минимум**
+- [x] **Шаг 4.3: Реализовать минимум**
 
 ```python
 class SettingsIsSymlink(RuntimeError):
@@ -732,12 +732,12 @@ class SettingsIsSymlink(RuntimeError):
 
 `main()` ловит его и печатает текст в stderr с кодом возврата 1.
 
-- [ ] **Шаг 4.4: Прогнать и убедиться, что зелено**
+- [x] **Шаг 4.4: Прогнать и убедиться, что зелено**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_patch_settings.py' -v`
 Ожидается: PASS, 28 прежних тестов плюс 1 новый.
 
-- [ ] **Шаг 4.5: Коммит**
+- [x] **Шаг 4.5: Коммит**
 
 ```bash
 git add scripts/patch-settings.py tests/test_patch_settings.py
