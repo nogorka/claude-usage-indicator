@@ -1,8 +1,8 @@
-"""Окно «Подробнее»: полный список лимитов с барами GTK.
+"""Окно «Подробнее»: секция на профиль, текст которых собирает bar.py.
 
 GTK-код тестами не покрыт по той же причине, что и indicator.py — нужен
-живой X11/Wayland-сеанс. Самодостаточен: читает снимок сам через
-state.read_state(), не заглядывает во внутренности Indicator.
+живой X11/Wayland-сеанс. Самодостаточен: читает состояние само через
+state.read_all_states(), не заглядывает во внутренности Indicator.
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import GLib, Gtk
 
 from . import bar, state
+from .profiles import profile_sort_key
 
 _POLL_INTERVAL_S = 10
 _WINDOW_TITLE = "Claude Code — Limits"
@@ -81,14 +82,15 @@ def _safe_refresh_content(win: Gtk.Window) -> bool:
 
 
 def _refresh_content(win: Gtk.Window) -> None:
-    """Пересобирает содержимое целиком — набор окон (model:*) между тиками не фиксирован.
+    """Пересобирает содержимое целиком — набор профилей и их окон (model:*) между тиками
+    не фиксирован.
 
     Новый Box строится до того, как убирается старый: если сборка бросит исключение,
     окно останется с прежним содержимым, а не опустеет.
     """
-    snapshot = state.read_state()
+    reading = state.read_all_states()
     now = time.time()
-    content = _build_content(snapshot, now)
+    content = _build_content(reading, now)
     old_child = win.get_child()
     if old_child is not None:
         win.remove(old_child)
@@ -97,14 +99,15 @@ def _refresh_content(win: Gtk.Window) -> None:
     content.show_all()
 
 
-def _build_content(snapshot: state.Snapshot, now: float) -> Gtk.Box:
+def _build_content(reading: state.Reading, now: float) -> Gtk.Box:
+    """Секция на каждый найденный профиль, в порядке `profile_sort_key`, затем одна
+    строка про файлы, которые не разобрались (если такие есть)."""
     box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-    for key in snapshot.order:
-        _append_window_section(box, snapshot.windows[key], now)
-    _append_problem_hint(box, snapshot)
-    if snapshot.extra_usage is not None:
-        _append_extra_usage(box, snapshot.extra_usage)
-    _append_age(box, snapshot, now)
+    for profile_id in sorted(reading.profiles, key=profile_sort_key):
+        _append_profile_section(box, reading.profiles[profile_id], now)
+    unreadable = bar.unreadable_line(reading.unreadable)
+    if unreadable is not None:
+        _add_label(box, unreadable)
     return box
 
 
@@ -122,11 +125,20 @@ def _add_level_bar(box: Gtk.Box, percent: float) -> None:
     box.pack_start(level, False, False, 0)
 
 
-def _append_window_section(box: Gtk.Box, window: state.Window, now: float) -> None:
-    _add_label(box, window.label)
-    _add_level_bar(box, window.percent)
-    _add_label(box, f"{bar.round_percent(window.percent)}%")
-    _add_label(box, bar.format_reset(window.resets_epoch, now))
+def _append_profile_section(box: Gtk.Box, entry: state.ProfileSnapshot, now: float) -> None:
+    """Секция одного профиля: заголовок, окна и возраст снимка — готовый текст из
+    `bar.menu_section_lines`, тот же, что и в меню трея, — плюс `extra_usage` между окнами
+    и возрастом, которого в этом тексте нет.
+
+    `menu_section_lines` всегда кладёт строку возраста последней в списке — единственная,
+    которую добавляет после цикла по окнам, — поэтому она безопасно отделяется срезом.
+    """
+    lines = bar.menu_section_lines(entry, now)
+    for line in lines[:-1]:
+        _add_label(box, line)
+    if entry.snapshot.extra_usage is not None:
+        _append_extra_usage(box, entry.snapshot.extra_usage)
+    _add_label(box, lines[-1])
     box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
 
 
@@ -134,21 +146,3 @@ def _append_extra_usage(box: Gtk.Box, extra: state.ExtraUsage) -> None:
     _add_label(box, "Extra usage")
     _add_level_bar(box, extra.percent)
     _add_label(box, f"{bar.round_percent(extra.percent)}%")
-    box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
-
-
-def _append_problem_hint(box: Gtk.Box, snapshot: state.Snapshot) -> None:
-    """Когда окон нет, объясняет почему: «ещё не спрашивали» и «файл битый» иначе неотличимы."""
-    if snapshot.windows:
-        return
-    text = bar.problem_text(snapshot.problem)
-    if text is not None:
-        _add_label(box, text)
-        box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 4)
-
-
-def _append_age(box: Gtk.Box, snapshot: state.Snapshot, now: float) -> None:
-    if snapshot.updated_epoch is None:
-        _add_label(box, "no data")
-    else:
-        _add_label(box, f"data {bar.format_age(snapshot.updated_epoch, now)}")
