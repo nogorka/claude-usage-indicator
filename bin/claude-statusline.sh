@@ -172,7 +172,7 @@ def dedup_by_key:
    ]) as $segments
 | (if ($segments | length) == 0 then "Claude: no data" else ($segments | join(" · ")) end) as $status_line
 
-| {limits: $limits, order: $order, status_line: $status_line}
+| {limits: $limits, order: $order, status_line: $status_line, profile_label: sanitize_label($raw_profile_label)}
   + (if $extra_usage != null then {extra_usage: $extra_usage} else {} end)
 JQ_EOF
 )"
@@ -291,7 +291,9 @@ main() {
     # синтаксической проверкой `jq empty` тут не обойтись: нужен ещё и
     # непустой результат основного фильтра.
     local result
-    result="$(printf '%s' "$raw" | jq -c "$JQ_FILTER" 2>/dev/null)" || result=""
+    result="$(printf '%s' "$raw" | jq -c \
+        --arg raw_profile_label "${CLAUDE_USAGE_PROFILE_LABEL:-$(profile_id)}" \
+        "$JQ_FILTER" 2>/dev/null)" || result=""
     if [[ -z "$result" ]]; then
         exit 0
     fi
@@ -305,12 +307,14 @@ main() {
 
     # config_dir в файл не пишется: читателю он не нужен ни для чего, а вторая
     # запись пути создала бы источник правды, который некому сверять с диском.
+    # profile.label берётся уже санированным из $result (.profile_label,
+    # см. JQ_FILTER) — той же sanitize_label, что чистит display_name модели,
+    # а не второй копией той же регулярки.
     local state_json
     state_json="$(printf '%s' "$result" | jq -c \
         --argjson epoch "$(date +%s)" \
-        --arg profile_id "$(profile_id)" \
-        --arg profile_label "${CLAUDE_USAGE_PROFILE_LABEL:-$(profile_id)}" '
-        {schema: 2, profile: {id: $profile_id, label: $profile_label},
+        --arg profile_id "$(profile_id)" '
+        {schema: 2, profile: {id: $profile_id, label: .profile_label},
          updated_epoch: $epoch, limits: .limits, order: .order}
         + (if has("extra_usage") then {extra_usage: .extra_usage} else {} end)
     ' 2>/dev/null)" || state_json=""

@@ -531,6 +531,23 @@ test_profile_label_defaults_to_id() {
     assert_eq "$desc: profile.label" "personal" "$(jq -r '.profile.label' "$state_file")"
 }
 
+# Регрессия: CLAUDE_USAGE_PROFILE_LABEL — пользовательская строка, но раньше
+# писалась в файл состояния как есть. "·" в ней читался бы как разделитель
+# самой статус-строки, а управляющий символ дошёл бы неповреждённым до
+# однострочной метки в трее. sanitize_label уже решает ровно эту задачу для
+# display_name модели — здесь та же санация, не вторая копия.
+test_profile_label_is_sanitized_like_model_display_name() {
+    local desc="профиль: CLAUDE_USAGE_PROFILE_LABEL санируется как display_name"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal" \
+        "CLAUDE_USAGE_PROFILE_LABEL=$(printf 'Work \x01· Fake')"
+    assert_common "$desc"
+    local state_file="$tmp/home/.local/state/claude-usage/personal.json"
+    if [[ ! -f "$state_file" ]]; then fail "$desc: файл состояния не создан"; return; fi
+    assert_eq "$desc: profile.label" "Work Fake" "$(jq -r '.profile.label' "$state_file")"
+}
+
 test_profile_claude_usage_state_overrides_path() {
     local desc="профиль: CLAUDE_USAGE_STATE по-прежнему определяет путь целиком"
     local tmp; tmp="$(mktemp -d)"
@@ -644,6 +661,7 @@ main() {
     test_profile_named_from_config_dir
     test_profile_schema_and_fields
     test_profile_label_defaults_to_id
+    test_profile_label_is_sanitized_like_model_display_name
     test_profile_claude_usage_state_overrides_path
     test_profile_id_matches_python_on_degenerate_names
 
