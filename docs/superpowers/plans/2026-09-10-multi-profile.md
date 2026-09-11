@@ -33,8 +33,9 @@ Ayatana AppIndicator3, bash + jq в хуке, тесты — stdlib `unittest` �
 ## Критерии приёмки
 
 - [ ] Готово, когда при двух файлах состояния бар показывает оба профиля со связывающим
-      окном каждого, подтверждается `PYTHONPATH=src /usr/bin/python3 -m unittest discover
-      -s tests -p 'test_bar.py' -v`.
+      окном каждого и компактной меткой его сброса (`↻HH:MM` в пределах суток, `↻DD.MM`
+      дальше, пусто у уже сброшенного окна), подтверждается `PYTHONPATH=src
+      /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`.
 - [ ] Готово, когда профиль с `updated_epoch` старше часа помечен в баре суффиксом
       несвежести, а в секции меню несёт строку с датой и временем снимка; подтверждается
       `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`,
@@ -46,13 +47,28 @@ Ayatana AppIndicator3, bash + jq в хуке, тесты — stdlib `unittest` �
       прочитать остальные профили и попадает в список проблем чтения; подтверждается
       `test_state.py`.
 - [ ] Готово, когда при единственном профиле на непросроченных данных строка бара
-      совпадает с сегодняшней посимвольно; подтверждается regression-тестом на фикстуре.
+      совпадает с сегодняшней посимвольно; подтверждается `PYTHONPATH=src
+      /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`, тест
+      `MultiProfileBarTests.test_single_profile_renders_exactly_as_before`.
 - [ ] Готово, когда `discover_profiles` находит `~/.claude-personal` с
       `.credentials.json` и не находит каталог без него; подтверждается `test_profiles.py`.
 - [ ] Готово, когда хук, запущенный с `CLAUDE_CONFIG_DIR=<tmp>/.claude-personal`, пишет
       `personal.json` с блоком `profile` и `schema: 2`; подтверждается
       `bash tests/test_statusline.sh`.
+- [ ] Готово, когда время сброса каждого окна показано у обоих профилей независимо от
+      свежести снимка; подтверждается `PYTHONPATH=src /usr/bin/python3 -m unittest
+      discover -s tests -p 'test_bar.py' -v`, тест
+      `MenuSectionTests.test_section_lines_carry_a_reset_text_for_every_window`.
+- [ ] Готово, когда меню трея несёт по пункту «Open Claude — …» на каждый найденный на
+      диске профиль и пункт стартует сессию с `CLAUDE_CONFIG_DIR` этого профиля;
+      автоматическая часть подтверждается `PYTHONPATH=src /usr/bin/python3 -m unittest
+      discover -s tests -p 'test_launcher.py' -v`, доставка переменной до оболочки —
+      ручной проверкой 8.4.
 - [ ] Готово, когда полный прогон трёх наборов зелёный.
+
+Требование спеки «покрытие новых модулей от 80%» в этот список не перенесено: `coverage`
+в системе нет, а ставить внешнюю зависимость план не вправе. Вопрос открыт, запись — в
+«Рисках и допущениях».
 
 ## Мандат автономии
 
@@ -336,13 +352,13 @@ class ReadAllStatesTests(unittest.TestCase):
                 "personal.json",
                 {
                     "schema": 2,
-                    "profile": {"id": "personal", "label": "личн"},
+                    "profile": {"id": "personal", "label": "own"},
                     "updated_epoch": 20,
                     "limits": _LIMITS,
                 },
             )
             reading = state.read_all_states(directory)
-            self.assertEqual(reading.profiles["personal"].label, "личн")
+            self.assertEqual(reading.profiles["personal"].label, "own")
 
     def test_duplicate_ids_keep_the_fresher_file(self):
         with TemporaryDirectory() as tmp:
@@ -353,7 +369,7 @@ class ReadAllStatesTests(unittest.TestCase):
                 "default.json",
                 {
                     "schema": 2,
-                    "profile": {"id": "default", "label": "раб"},
+                    "profile": {"id": "default", "label": "work"},
                     "updated_epoch": 99,
                     "limits": _LIMITS,
                 },
@@ -371,7 +387,7 @@ class ReadAllStatesTests(unittest.TestCase):
                 "personal.json",
                 {
                     "schema": 2,
-                    "profile": {"id": "personal", "label": "личн"},
+                    "profile": {"id": "personal", "label": "own"},
                     "updated_epoch": 20,
                     "limits": _LIMITS,
                 },
@@ -786,13 +802,13 @@ test_profile_schema_and_fields() {
     local tmp; tmp="$(mktemp -d)"
     run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
         "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal" \
-        "CLAUDE_USAGE_PROFILE_LABEL=личн"
+        "CLAUDE_USAGE_PROFILE_LABEL=own"
     assert_common "$desc"
     local state_file="$tmp/home/.local/state/claude-usage/personal.json"
     if [[ ! -f "$state_file" ]]; then fail "$desc: файл состояния не создан"; return; fi
     assert_eq "$desc: schema" "2" "$(jq -r '.schema' "$state_file")"
     assert_eq "$desc: profile.id" "personal" "$(jq -r '.profile.id' "$state_file")"
-    assert_eq "$desc: profile.label" "личн" "$(jq -r '.profile.label' "$state_file")"
+    assert_eq "$desc: profile.label" "own" "$(jq -r '.profile.label' "$state_file")"
 }
 
 test_profile_label_defaults_to_id() {
@@ -934,13 +950,18 @@ git commit -m "feat: хук пишет файл состояния на проф
 ### 6. `bar.py` — мультипрофильный бар
 
 **Файлы:**
-- Изменить: `src/claude_usage_indicator/bar.py:52-91`
+- Изменить: `src/claude_usage_indicator/bar.py:52-91`; добавить `format_reset_panel`
+  сразу за существующим `format_reset` (сейчас `:114-125`) — полная и компактная форма
+  одного понятия физически рядом; добавить константу `_STALE_MARK` в шапку файла рядом
+  с `_STALE_SUFFIX` (`:22`), сам `_STALE_SUFFIX` не трогать.
 - Тест: `tests/test_bar.py`
 
 **Интерфейсы:**
 - Потребляет: `state.Reading`, `state.ProfileSnapshot`, `profiles.profile_sort_key`,
   `bar.effective_percent` из шагов 1-3.
 - Отдаёт: `binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] | None`;
+  `format_reset_panel(resets_epoch: int | None, now_epoch: float) -> str` — компактный
+  маркер сброса для панели, `format_reset` не меняет и не заменяет;
   `panel_state_for(reading: Reading, now_epoch: float) -> tuple[str, bool]`;
   `panel_label_no_data() -> str`;
   `menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]`;
@@ -954,6 +975,26 @@ git commit -m "feat: хук пишет файл состояния на проф
 
 ```python
 # добавить в tests/test_bar.py
+class FormatResetPanelTests(_FixedTzMixin, unittest.TestCase):
+    """Компактная метка сброса для панели: HH:MM в пределах суток, DD.MM дальше,
+    пусто после сброса — контраст с полной формой `format_reset` из меню."""
+
+    def test_under_24_hours_shows_time(self) -> None:
+        self.assertEqual(bar.format_reset_panel(18_300, now_epoch=0), "↻05:05")
+
+    def test_exactly_24_hours_shows_date_not_time(self) -> None:
+        self.assertEqual(bar.format_reset_panel(86_400, now_epoch=0), "↻02.01")
+
+    def test_more_than_24_hours_shows_date(self) -> None:
+        self.assertEqual(bar.format_reset_panel(190_800, now_epoch=0), "↻03.01")
+
+    def test_already_reset_has_no_marker(self) -> None:
+        self.assertEqual(bar.format_reset_panel(1_000, now_epoch=2_000), "")
+
+    def test_no_reset_epoch_has_no_marker(self) -> None:
+        self.assertEqual(bar.format_reset_panel(None, now_epoch=0), "")
+
+
 class MultiProfileBarTests(unittest.TestCase):
     def _reading(self, *entries):
         return state.Reading(profiles={e.profile_id: e for e in entries}, unreadable=())
@@ -972,7 +1013,7 @@ class MultiProfileBarTests(unittest.TestCase):
         return state.ProfileSnapshot(profile_id=profile_id, label=label, snapshot=snapshot)
 
     def test_single_profile_renders_exactly_as_before(self):
-        entry = self._entry("default", "раб", 42.0, 27.0, updated=8_000)
+        entry = self._entry("default", "work", 42.0, 27.0, updated=8_000)
         legacy, legacy_alarm = bar.panel_state(entry.snapshot, now_epoch=8_100)
         new, new_alarm = bar.panel_state_for(self._reading(entry), now_epoch=8_100)
         self.assertEqual(new, legacy)
@@ -981,45 +1022,46 @@ class MultiProfileBarTests(unittest.TestCase):
     def test_two_profiles_each_contribute_their_binding_window(self):
         label, _ = bar.panel_state_for(
             self._reading(
-                self._entry("default", "раб", 42.0, 27.0, updated=8_000),
-                self._entry("personal", "личн", 11.0, 61.0, updated=8_000),
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                self._entry("personal", "own", 11.0, 61.0, updated=8_000),
             ),
             now_epoch=8_100,
         )
-        self.assertIn("раб", label)
+        self.assertIn("work", label)
         self.assertIn("42%", label)
         self.assertNotIn("27%", label)
-        self.assertIn("личн", label)
+        self.assertIn("own", label)
         self.assertIn("61%", label)
         self.assertNotIn("11%", label)
+        self.assertIn("↻", label)
 
     def test_default_profile_comes_first_regardless_of_freshness(self):
         label, _ = bar.panel_state_for(
             self._reading(
-                self._entry("personal", "личн", 90.0, 90.0, updated=9_999),
-                self._entry("default", "раб", 1.0, 1.0, updated=1),
+                self._entry("personal", "own", 90.0, 90.0, updated=9_999),
+                self._entry("default", "work", 1.0, 1.0, updated=1),
             ),
             now_epoch=8_100,
         )
-        self.assertLess(label.index("раб"), label.index("личн"))
+        self.assertLess(label.index("work"), label.index("own"))
 
     def test_stale_profile_is_marked_and_the_fresh_one_is_not(self):
         label, _ = bar.panel_state_for(
             self._reading(
-                self._entry("default", "раб", 42.0, 27.0, updated=8_000),
-                self._entry("personal", "личн", 61.0, 11.0, updated=1),
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                self._entry("personal", "own", 61.0, 11.0, updated=1),
             ),
             now_epoch=8_100,
         )
-        head, tail = label.split("личн")
-        self.assertNotIn("*", head.split("раб")[1])
+        head, tail = label.split("own")
+        self.assertNotIn("*", head.split("work")[1])
         self.assertIn("*", tail)
 
     def test_alarm_in_any_profile_raises_the_alarm(self):
         _, alarm = bar.panel_state_for(
             self._reading(
-                self._entry("default", "раб", 1.0, 1.0, updated=8_000),
-                self._entry("personal", "личн", 95.0, 1.0, updated=8_000),
+                self._entry("default", "work", 1.0, 1.0, updated=8_000),
+                self._entry("personal", "own", 95.0, 1.0, updated=8_000),
             ),
             now_epoch=8_100,
         )
@@ -1030,12 +1072,33 @@ class MultiProfileBarTests(unittest.TestCase):
         self.assertEqual(label, bar.panel_label_no_data())
         self.assertFalse(alarm)
 
+    def test_expired_binding_window_has_no_reset_marker_in_the_panel(self):
+        expired_window = state.Window(percent=87.0, resets_epoch=1_000, label="5h")
+        expired_snapshot = state.Snapshot(
+            updated_epoch=8_000,
+            windows={"five_hour": expired_window},
+            order=("five_hour",),
+            extra_usage=None,
+            problem=None,
+        )
+        expired_entry = state.ProfileSnapshot(
+            profile_id="personal", label="own", snapshot=expired_snapshot
+        )
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                expired_entry,
+            ),
+            now_epoch=8_100,
+        )
+        self.assertNotIn("↻", label.split("own")[1])
+
 
 class MenuSectionTests(unittest.TestCase):
     def _entry(self):
         return state.ProfileSnapshot(
             profile_id="personal",
-            label="личн",
+            label="own",
             snapshot=state.Snapshot(
                 updated_epoch=1_000,
                 windows={
@@ -1050,7 +1113,7 @@ class MenuSectionTests(unittest.TestCase):
 
     def test_section_lines_name_the_profile_and_every_window(self):
         lines = bar.menu_section_lines(self._entry(), now_epoch=8_000)
-        self.assertEqual(lines[0], "личн")
+        self.assertEqual(lines[0], "own")
         self.assertTrue(any("61%" in line for line in lines))
         self.assertTrue(any("11%" in line for line in lines))
         self.assertTrue(any("as of" in line for line in lines))
@@ -1071,12 +1134,18 @@ class MenuSectionTests(unittest.TestCase):
 - [ ] **Шаг 6.2: Прогнать и убедиться, что падает**
 
 Запуск: `PYTHONPATH=src /usr/bin/python3 -m unittest discover -s tests -p 'test_bar.py' -v`
-Ожидается: FAIL, `AttributeError: ... has no attribute 'panel_state_for'`, затем то же
-про `menu_section_lines`.
+Ожидается: FAIL, `AttributeError: ... has no attribute 'format_reset_panel'`, затем то же
+про `panel_state_for` и про `menu_section_lines`.
 
 - [ ] **Шаг 6.3: Реализовать минимум**
 
 ```python
+# Два профиля делят ширину панели пополам, поэтому несвежесть помечается одним символом.
+# Легаси-суффикс ` (stale)` остаётся за одиночным режимом: критерий 5 требует от него
+# посимвольного совпадения с сегодняшней строкой.
+_STALE_MARK = "*"
+
+
 def binding_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] | None:
     """Окно, которое сейчас связывает: с наибольшим эффективным процентом.
 
@@ -1114,10 +1183,11 @@ def panel_state_for(reading: Reading, now_epoch: float) -> tuple[str, bool]:
 
 
 def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
-    """Один профиль в метке панели: только связывающее окно.
+    """Один профиль в метке панели: связывающее окно, процент и компактная метка
+    его сброса.
 
-    Все окна каждого профиля в панель GNOME не помещаются; полная разбивка живёт
-    в меню и в окне «Подробнее».
+    Все окна каждого профиля в панель GNOME не помещаются; полная разбивка по всем
+    окнам и полное время сброса каждого живут в меню и в окне «Подробнее».
     """
     binding = binding_window(entry.snapshot, now_epoch)
     if binding is None:
@@ -1126,9 +1196,42 @@ def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
     percent = effective_percent(window, now_epoch)
     chunk = f"{entry.label} {panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
     if is_stale(entry.snapshot, now_epoch):
-        chunk += _STALE_SUFFIX
+        chunk += _STALE_MARK
+    reset_marker = format_reset_panel(window.resets_epoch, now_epoch)
+    if reset_marker:
+        chunk += " " + reset_marker
     return chunk
 ```
+
+`format_reset_panel` физически ложится в файл сразу за `format_reset` (`bar.py:114-125`),
+а не рядом с `_profile_chunk`: полная и компактная форма одного понятия остаются рядом
+в исходнике, `_profile_chunk` вызывает её через имя модуля как любую другую функцию
+файла.
+
+```python
+def format_reset_panel(resets_epoch: int | None, now_epoch: float) -> str:
+    """Компактная метка сброса связывающего окна для панели: `↻HH:MM`/`↻DD.MM`.
+
+    Не полная форма `format_reset` — та несёт «через Nч Mм» и остаётся только в меню,
+    где ширина не ограничена. Здесь ширина панели фиксирована: дальше суток точность
+    падает до дня. Окно уже сброшено или срок неизвестен — пустая строка: следующее
+    время сброса демону неизвестно, пока новая сессия не запишет состояние, а врать
+    нельзя.
+    """
+    if resets_epoch is None or resets_epoch <= now_epoch:
+        return ""
+    reset_dt = datetime.fromtimestamp(resets_epoch, tz=timezone.utc).astimezone()
+    delta_s = resets_epoch - now_epoch
+    if delta_s < 86400:
+        return "↻" + reset_dt.strftime("%H:%M")
+    return "↻" + reset_dt.strftime("%d.%m")
+```
+
+Решение владелицы 2026-09-11 отменяет прежнее «время сброса в панель не помещается» из
+спеки: замер строки `work 5h ▓▓░░░░░░ 42% ↻01:20 · own 7d ▓▓▓▓▓░░░ 61%* ↻12.09` шрифтом
+13px DejaVu Sans Mono дал 446 px; на экране 1920×1080 в правой зоне панели GNOME доступно
+около 850 px — помещается с запасом даже при третьем профиле. Это обоснование, не
+догадка: до замера в спеке было зафиксировано обратное.
 
 `panel_label_no_data()` — тонкая обёртка над существующей константой `_NO_DATA_LABEL`,
 чтобы тесты не зависели от приватного имени.
@@ -1139,8 +1242,9 @@ def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
 def menu_section_lines(entry: ProfileSnapshot, now_epoch: float) -> list[str]:
     """Секция одного профиля: метка, все окна с процентом и сбросом, возраст снимка.
 
-    В отличие от панели, здесь показываются все окна: время сброса и есть то, ради чего
-    меню открывают, и прятать его за выбором связывающего окна нельзя.
+    В отличие от панели — там только связывающее окно и компактный маркер его сброса —
+    здесь показываются все окна с полным временем сброса каждого: это то, ради чего меню
+    открывают, и прятать его за выбором одного окна нельзя.
     """
     snapshot = entry.snapshot
     lines = [entry.label]
@@ -1198,9 +1302,9 @@ git commit -m "feat: бар и текст меню по профилям"
 
 Сверять внутреннюю команду подстрокой нельзя, и это не придирка к стилю: `shlex.quote`
 скомпилирован с `re.ASCII` (`/usr/lib/python3.12/shlex.py:321`), поэтому любую строку с
-кириллицей он считает небезопасной и берёт в кавычки целиком — `личн` превращается в
-`'личн'`. Кавычки здесь правильные, а вот `assertIn("...=личн", inner)` был бы вечно
-красным. Команда разбирается тем же `shlex`, которым её прочтёт shell.
+кириллицей он считает небезопасной и берёт в кавычки целиком — `мой личный` превращается
+в `'мой личный'`. Кавычки здесь правильные, а вот `assertIn("...=мой личный", inner)`
+был бы вечно красным. Команда разбирается тем же `shlex`, которым её прочтёт shell.
 
 ```python
 # tests/test_launcher.py
@@ -1224,17 +1328,17 @@ class LaunchCommandTests(unittest.TestCase):
 
     def test_default_profile_does_not_set_config_dir(self):
         command = launcher.launch_command(
-            self._profile("default", "раб", "/home/u/.claude"), home=Path("/home/u")
+            self._profile("default", "work", "/home/u/.claude"), home=Path("/home/u")
         )
         self.assertNotIn("CLAUDE_CONFIG_DIR", self._assignments(command))
 
     def test_named_profile_sets_config_dir_and_label(self):
         command = launcher.launch_command(
-            self._profile("personal", "личн", "/home/u/.claude-personal"), home=Path("/home/u")
+            self._profile("personal", "own", "/home/u/.claude-personal"), home=Path("/home/u")
         )
         assignments = self._assignments(command)
         self.assertEqual(assignments["CLAUDE_CONFIG_DIR"], "/home/u/.claude-personal")
-        self.assertEqual(assignments["CLAUDE_USAGE_PROFILE_LABEL"], "личн")
+        self.assertEqual(assignments["CLAUDE_USAGE_PROFILE_LABEL"], "own")
 
     def test_label_with_a_space_survives_the_shell(self):
         command = launcher.launch_command(
@@ -1248,7 +1352,7 @@ class LaunchCommandTests(unittest.TestCase):
 
     def test_terminal_is_gnome_terminal(self):
         command = launcher.launch_command(
-            self._profile("default", "раб", "/home/u/.claude"), home=Path("/home/u")
+            self._profile("default", "work", "/home/u/.claude"), home=Path("/home/u")
         )
         self.assertEqual(command[0], "gnome-terminal")
 
@@ -1257,7 +1361,7 @@ class LaunchTests(unittest.TestCase):
     def test_successful_spawn_reports_no_error(self):
         calls = []
         result = launcher.launch(
-            profiles.Profile(id="default", label="раб", config_dir=Path("/home/u/.claude")),
+            profiles.Profile(id="default", label="work", config_dir=Path("/home/u/.claude")),
             spawn=lambda *a, **k: calls.append((a, k)),
             home=Path("/home/u"),
         )
@@ -1269,7 +1373,7 @@ class LaunchTests(unittest.TestCase):
             raise OSError("gnome-terminal: not found")
 
         result = launcher.launch(
-            profiles.Profile(id="default", label="раб", config_dir=Path("/home/u/.claude")),
+            profiles.Profile(id="default", label="work", config_dir=Path("/home/u/.claude")),
             spawn=boom,
             home=Path("/home/u"),
         )
@@ -1406,10 +1510,11 @@ XDG_STATE_HOME=/tmp/cui-demo PYTHONPATH=src /usr/bin/python3 -m claude_usage_ind
 
 - [ ] **Шаг 8.4: Ручная проверка (GREEN руками)**
 
-Тот же запуск, что в шаге 8.1. Ожидается: в панели два профиля, в меню две секции с
-временем сброса у каждого окна и два пункта «Open Claude — …».
+Тот же запуск, что в шаге 8.1. Ожидается: в панели два профиля, у каждого — компактная
+метка сброса связывающего окна; в меню две секции с полным временем сброса у каждого
+окна и два пункта «Open Claude — …».
 
-Отдельно проверяется то, что автотест проверить не может: нажать «Open Claude — личн»
+Отдельно проверяется то, что автотест проверить не может: нажать «Open Claude — own»
 и в открывшемся окне выполнить `echo "$CLAUDE_CONFIG_DIR"` — должен напечататься путь
 второго профиля, а `echo "$CLAUDE_USAGE_PROFILE_LABEL"` — его метка. Это единственная
 проверка того, что переменные действительно дошли через `gnome-terminal` до оболочки;
@@ -1643,8 +1748,10 @@ git commit -m "chore: уборка старого файла состояния 
   вывод идентификатора профиля только из `CLAUDE_CONFIG_DIR`; файл состояния на профиль
   вместо одного общего; схему 2 с совместимостью со схемой 1 вместо миграции; связывающее
   окно в баре вместо всех окон; `0%` у просроченного окна вместо сохранённого процента;
-  поиск профилей по `.credentials.json` на диске вместо файла конфигурации; перенос всех
-  MCP-логинов во второй профиль (решение владелицы, цена записана в спеке); `sed -E`
-  вместо `tr -c` в `profile_id` (замерено, `tr` расходится с Python); `shlex.quote`
-  внутри команды вместо `subprocess.Popen(env=…)`; отсутствие автотестов в шагах 8 и 9
-  при вынесенной в `bar.py` текстовой логике
+  компактный маркер сброса связывающего окна прямо в панели (решение владелицы
+  2026-09-11, замер ширины — 446 px из 850 px доступных) вместо прежнего «время сброса
+  живёт только в меню»; поиск профилей по `.credentials.json` на диске вместо файла
+  конфигурации; перенос всех MCP-логинов во второй профиль (решение владелицы, цена
+  записана в спеке); `sed -E` вместо `tr -c` в `profile_id` (замерено, `tr` расходится
+  с Python); `shlex.quote` внутри команды вместо `subprocess.Popen(env=…)`; отсутствие
+  автотестов в шагах 8 и 9 при вынесенной в `bar.py` текстовой логике
