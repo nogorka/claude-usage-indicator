@@ -7,14 +7,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
+import string
 from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_ID = "default"
 _UNSAFE = re.compile(r"[^a-z0-9_-]+")
 _CLAUDE_PREFIX = "claude-"
+_HASH_LEN = 6
+# str.lower() понижает регистр по Юникоду ("İ" -> "i" + комбинирующая точка),
+# а bash-сторона под LC_ALL=C этого не делает — паритет реализаций требует
+# одного отображения на любом вводе, поэтому регистр понижается только для ASCII.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
 
 
 @dataclass(frozen=True)
@@ -29,16 +36,37 @@ def profile_id_from_config_dir(config_dir: str | os.PathLike[str] | None) -> str
 
     Пустое значение и $HOME/.claude дают DEFAULT_ID: так выглядит установка без
     CLAUDE_CONFIG_DIR, и её файл состояния не должен переезжать при апгрейде.
+
+    Правило неинъективно только там, где санитизация ничего не теряет: слаг,
+    изменённый очисткой, опустевший или совпавший с зарезервированным DEFAULT_ID,
+    дополняется хэшем канонического пути — иначе разные каталоги молча писали бы
+    в один и тот же файл состояния.
     """
     if not config_dir:
         return DEFAULT_ID
-    resolved = _resolve(Path(os.path.expanduser(str(config_dir))))
+    # \n вырезается до канонизации: bash-сторона строит слаг через sed/tr
+    # построчно и не видит перевод строки как часть санируемой строки, а
+    # python re.sub видит — без общего среза здесь реализации расходятся на
+    # путях с переводом строки внутри значения CLAUDE_CONFIG_DIR.
+    raw = str(config_dir).replace("\n", "")
+    if not raw:
+        return DEFAULT_ID
+    resolved = _resolve(Path(os.path.expanduser(raw)))
     if resolved == _resolve(Path.home() / ".claude"):
         return DEFAULT_ID
-    name = resolved.name.lstrip(".").lower()
+    name = resolved.name.lstrip(".").translate(_ASCII_LOWER)
     if name.startswith(_CLAUDE_PREFIX):
         name = name[len(_CLAUDE_PREFIX):]
-    return _UNSAFE.sub("-", name).strip("-") or DEFAULT_ID
+    slug = _UNSAFE.sub("-", name).strip("-")
+    # default зарезервирован за $HOME/.claude: каталог, чей слаг случайно
+    # совпал со словом "default", не имеет права занять чужой файл состояния.
+    if slug == name and slug and slug != DEFAULT_ID:
+        return slug
+    # Хэш — от канонического пути, а не от name/slug: два каталога с одним и
+    # тем же лоссовым слагом (например, оба нечитаемых в ASCII) обязаны
+    # разойтись, а хэш урезанного слага их бы не различил.
+    digest = hashlib.sha256(str(resolved).encode("utf-8")).hexdigest()[:_HASH_LEN]
+    return f"{slug}-{digest}" if slug else f"profile-{digest}"
 
 
 def _resolve(path: Path) -> Path:

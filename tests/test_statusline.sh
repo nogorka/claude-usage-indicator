@@ -569,7 +569,9 @@ test_profile_id_matches_python_on_degenerate_names() {
     local desc="профиль: bash и python дают один id"
     local name produced expected tmp found
     for name in ".claude-!!!" ".claude-Work  Acct" ".claude-my--profile" ".claude-личн" \
-                ".Claude-Personal" "..claude-work" ".claude-work//"; do
+                ".Claude-Personal" "..claude-work" ".claude-work//" ".claude-work!!" \
+                ".claude-Work" ".claude-личный" ".claude-работа" ".claude-Café" \
+                ".claude-default"; do
         tmp="$(mktemp -d)"
         run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
             "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/$name"

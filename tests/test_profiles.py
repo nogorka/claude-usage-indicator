@@ -1,3 +1,4 @@
+import hashlib
 import os
 import unittest
 from pathlib import Path
@@ -26,11 +27,45 @@ class ProfileIdTests(unittest.TestCase):
             profiles.profile_id_from_config_dir(f"{Path.home()}/.claude-personal/"), "personal"
         )
 
-    def test_unsafe_characters_are_replaced(self):
-        self.assertEqual(profiles.profile_id_from_config_dir("/tmp/.claude-Work Acct!"), "work-acct")
+    def test_dir_named_work_is_id_work(self):
+        self.assertEqual(profiles.profile_id_from_config_dir(Path.home() / ".claude-work"), "work")
 
-    def test_name_that_sanitizes_to_nothing_falls_back_to_default(self):
-        self.assertEqual(profiles.profile_id_from_config_dir("/tmp/.claude-!!!"), "default")
+    def test_dir_named_work_uppercase_collides_with_lowercase(self):
+        # Архитектор принял эту коллизию сознательно: приведение регистра потерей
+        # информации не считается, поэтому не детектируется и не хэшируется.
+        self.assertEqual(profiles.profile_id_from_config_dir(Path.home() / ".claude-Work"), "work")
+
+    def test_unsafe_characters_produce_slug_plus_hash(self):
+        result = profiles.profile_id_from_config_dir("/tmp/.claude-Work Acct!")
+        self.assertRegex(result, r"^work-acct-[0-9a-f]{6}$")
+
+    def test_name_that_sanitizes_to_nothing_gets_profile_prefix_and_hash(self):
+        result = profiles.profile_id_from_config_dir("/tmp/.claude-!!!")
+        self.assertRegex(result, r"^profile-[0-9a-f]{6}$")
+
+    def test_hash_suffix_matches_sha256_of_canonical_path(self):
+        config_dir = "/tmp/.claude-!!!"
+        result = profiles.profile_id_from_config_dir(config_dir)
+        canonical = str(Path(config_dir).resolve())
+        expected_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:6]
+        self.assertEqual(result, f"profile-{expected_digest}")
+
+    def test_cyrillic_lossy_names_are_distinguishable_from_each_other_and_default(self):
+        personal = profiles.profile_id_from_config_dir("/tmp/.claude-личный")
+        work = profiles.profile_id_from_config_dir("/tmp/.claude-работа")
+        self.assertNotEqual(personal, work)
+        self.assertNotEqual(personal, "default")
+        self.assertNotEqual(work, "default")
+        self.assertRegex(personal, r"^profile-[0-9a-f]{6}$")
+        self.assertRegex(work, r"^profile-[0-9a-f]{6}$")
+
+    def test_diacritic_name_keeps_ascii_slug_prefix_plus_hash(self):
+        result = profiles.profile_id_from_config_dir("/tmp/.claude-Café")
+        self.assertRegex(result, r"^caf-[0-9a-f]{6}$")
+
+    def test_slug_colliding_with_reserved_default_gets_hash_suffix(self):
+        result = profiles.profile_id_from_config_dir("/tmp/.claude-default")
+        self.assertRegex(result, r"^default-[0-9a-f]{6}$")
 
     def test_sort_key_puts_default_first(self):
         self.assertEqual(
