@@ -103,6 +103,14 @@ class PlanUninstallTests(unittest.TestCase):
         settings = {"statusLine": FOREIGN_BLOCK}
         self.assertIsNone(patch_settings.plan_uninstall(settings, COMMAND))
 
+    def test_removes_legacy_two_key_block_predating_refresh_interval(self) -> None:
+        # Установки до 631a9ae несут двухключевой блок без refreshInterval;
+        # уборка обязана снять и его — иначе на диске остаётся статьюслайн,
+        # указывающий на уже удалённый хук.
+        settings = {"theme": "dark", "statusLine": {"type": "command", "command": COMMAND}}
+        result = patch_settings.plan_uninstall(settings, COMMAND)
+        self.assertEqual(result, {"theme": "dark"})
+
 
 class BackupAndAtomicWriteTests(unittest.TestCase):
     def test_backup_returns_none_when_no_original_file(self) -> None:
@@ -148,6 +156,19 @@ class BackupAndAtomicWriteTests(unittest.TestCase):
             os.chmod(path, 0o644)
             patch_settings.atomic_write(path, {"new": True})
             self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o644)
+
+
+class SymlinkProtectionTests(unittest.TestCase):
+    def test_symlinked_settings_is_refused_with_an_explanation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real = Path(tmp) / "settings.json"
+            real.write_text("{}", encoding="utf-8")
+            link = Path(tmp) / "linked.json"
+            link.symlink_to(real)
+            with self.assertRaises(patch_settings.SettingsIsSymlink) as caught:
+                patch_settings._apply("install", "/bin/true", link, dry_run=False)
+            self.assertIn(str(real), str(caught.exception))
+            self.assertTrue(link.is_symlink())
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
@@ -203,6 +224,20 @@ class CliEndToEndTests(unittest.TestCase):
             self.assertEqual(settings_path.read_text(encoding="utf-8"), original)
             self.assertFalse(settings_path.with_name("settings.json.bak").exists())
 
+    def test_install_conflict_message_does_not_leak_settings_content(self) -> None:
+        # Чужая command может нести секрет аргументом (токен в CLI-вызове) —
+        # сообщение о конфликте обязано указать файл для просмотра, а не
+        # процитировать его содержимое в stderr.
+        secret = "sk-super-secret-token"
+        foreign_with_secret = {"type": "command", "command": f"/opt/other/hook.sh --token={secret}"}
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+            settings_path.write_text(json.dumps({"statusLine": foreign_with_secret}), encoding="utf-8")
+            result = _run_cli("install", "--command", COMMAND, "--settings", str(settings_path))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn(secret, result.stderr)
+            self.assertIn(str(settings_path), result.stderr)
+
     def test_uninstall_removes_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             settings_path = Path(tmp) / "settings.json"
@@ -236,6 +271,17 @@ class CliEndToEndTests(unittest.TestCase):
             result = _run_cli("uninstall", "--command", COMMAND, "--settings", str(settings_path))
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(settings_path.read_text(encoding="utf-8")), {})
+
+    def test_uninstall_removes_legacy_two_key_block(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            settings_path = Path(tmp) / "settings.json"
+            settings_path.write_text(
+                json.dumps({"theme": "dark", "statusLine": {"type": "command", "command": COMMAND}}),
+                encoding="utf-8",
+            )
+            result = _run_cli("uninstall", "--command", COMMAND, "--settings", str(settings_path))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(settings_path.read_text(encoding="utf-8")), {"theme": "dark"})
 
     def test_uninstall_leaves_foreign_statusline_and_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -22,11 +22,17 @@ assert_eq() {
 # Прогоняет хук на входе $1 в свежем временном каталоге состояния и кладёт
 # результат в глобальные HOOK_*. Свежий каталог на кейс — тесты не текут
 # друг в друга и заодно проверяют автосоздание каталога состояния.
+# CLAUDE_CONFIG_DIR/CLAUDE_USAGE_PROFILE_LABEL сняты явно (env -u), а не
+# просто не заданы здесь: они могут реально сидеть в окружении, где гоняются
+# тесты (у владелицы репозитория второй профиль заведён), и без -u вывод
+# хука тайком перестал бы быть "default" — тесты, ожидающие default,
+# ловили бы это не как свой провал, а как чужую переменную окружения.
 run_hook() {
     local input="$1"
     HOOK_TMP_DIR="$(mktemp -d)"
     HOOK_STATE_FILE="$HOOK_TMP_DIR/state/claude-usage/latest.json"
-    HOOK_STDOUT="$(printf '%s' "$input" | CLAUDE_USAGE_STATE="$HOOK_STATE_FILE" "$HOOK" 2>"$HOOK_TMP_DIR/stderr")"
+    HOOK_STDOUT="$(printf '%s' "$input" | env -u CLAUDE_CONFIG_DIR -u CLAUDE_USAGE_PROFILE_LABEL \
+        CLAUDE_USAGE_STATE="$HOOK_STATE_FILE" "$HOOK" 2>"$HOOK_TMP_DIR/stderr")"
     HOOK_EXIT=$?
     HOOK_STDERR="$(cat "$HOOK_TMP_DIR/stderr")"
 }
@@ -60,7 +66,7 @@ assert_state_file() {
     schema="$(jq -r '.schema' "$HOOK_STATE_FILE")"
     epoch="$(jq -r '.updated_epoch' "$HOOK_STATE_FILE")"
     now="$(date +%s)"
-    assert_eq "$desc: schema" "1" "$schema"
+    assert_eq "$desc: schema" "2" "$schema"
     diff=$(( now - epoch ))
     if (( diff < 0 || diff > 10 )); then
         fail "$desc: updated_epoch не похож на текущее время ($epoch, now=$now)"
@@ -91,7 +97,8 @@ test_both_windows() {
     assert_common "$desc"
     assert_stdout "$desc" "5h ▓▓▓░░░░░ 42% · 7d ▓▓▓▓░░░░ 55%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {
             "five_hour": {"percent": 42.3, "resets_epoch": 1788550200},
             "seven_day": {"percent": 55.0, "resets_epoch": 1788700000}
@@ -111,7 +118,8 @@ test_five_hour_only() {
     assert_common "$desc"
     assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"five_hour": {"percent": 20.0, "resets_epoch": 1700000000}},
         "order": ["five_hour"]
     }'
@@ -123,7 +131,8 @@ test_seven_day_only() {
     assert_common "$desc"
     assert_stdout "$desc" "7d ▓▓▓▓▓░░░ 63%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"seven_day": {"percent": 63.0, "resets_epoch": 1700000500}},
         "order": ["seven_day"]
     }'
@@ -137,7 +146,7 @@ test_no_rate_limits_key() {
     run_hook "$(fixture no_rate_limits.json)"
     assert_common "$desc"
     assert_stdout "$desc" "Claude: no data"
-    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+    assert_state_file "$desc" '{"schema": 2, "profile": {"id": "default", "label": "default"}, "limits": {}, "order": []}'
 }
 
 test_empty_rate_limits() {
@@ -145,7 +154,7 @@ test_empty_rate_limits() {
     run_hook "$(fixture empty_rate_limits.json)"
     assert_common "$desc"
     assert_stdout "$desc" "Claude: no data"
-    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+    assert_state_file "$desc" '{"schema": 2, "profile": {"id": "default", "label": "default"}, "limits": {}, "order": []}'
 }
 
 test_rate_limits_not_object() {
@@ -153,7 +162,7 @@ test_rate_limits_not_object() {
     run_hook "$(fixture rate_limits_not_object.json)"
     assert_common "$desc"
     assert_stdout "$desc" "Claude: no data"
-    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+    assert_state_file "$desc" '{"schema": 2, "profile": {"id": "default", "label": "default"}, "limits": {}, "order": []}'
 }
 
 test_window_without_used_percentage() {
@@ -162,7 +171,8 @@ test_window_without_used_percentage() {
     assert_common "$desc"
     assert_stdout "$desc" "7d ▓░░░░░░░ 10%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"seven_day": {"percent": 10.0}},
         "order": ["seven_day"]
     }'
@@ -210,7 +220,8 @@ test_model_scoped_two_items() {
     fable_epoch="$(date -d "2026-09-06T09:00:00Z" +%s)"
     opus_epoch="$(date -d "2026-09-07T00:00:00Z" +%s)"
     assert_state_file "$desc" "{
-        \"schema\": 1,
+        \"schema\": 2,
+        \"profile\": {\"id\": \"default\", \"label\": \"default\"},
         \"limits\": {
             \"model:fable\": {\"percent\": 21.0, \"label\": \"Fable\", \"resets_epoch\": $fable_epoch},
             \"model:opus-4.5\": {\"percent\": 55.5, \"label\": \"Opus 4.5\", \"resets_epoch\": $opus_epoch}
@@ -224,7 +235,7 @@ test_model_scoped_null_utilization_skipped() {
     run_hook "$(fixture model_scoped_null_utilization.json)"
     assert_common "$desc"
     assert_stdout "$desc" "Claude: no data"
-    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+    assert_state_file "$desc" '{"schema": 2, "profile": {"id": "default", "label": "default"}, "limits": {}, "order": []}'
 }
 
 test_model_scoped_empty_display_name_skipped() {
@@ -232,7 +243,7 @@ test_model_scoped_empty_display_name_skipped() {
     run_hook "$(fixture model_scoped_empty_display_name.json)"
     assert_common "$desc"
     assert_stdout "$desc" "Claude: no data"
-    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+    assert_state_file "$desc" '{"schema": 2, "profile": {"id": "default", "label": "default"}, "limits": {}, "order": []}'
 }
 
 test_model_scoped_unparsable_resets_at() {
@@ -241,7 +252,8 @@ test_model_scoped_unparsable_resets_at() {
     assert_common "$desc"
     assert_stdout "$desc" "Fable ▓░░░░░░░ 10%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"model:fable": {"percent": 10.0, "label": "Fable"}},
         "order": ["model:fable"]
     }'
@@ -256,7 +268,8 @@ test_display_name_sanitization() {
     assert_common "$desc"
     assert_stdout "$desc" "Fable 5 ▓▓▓▓░░░░ 50%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"model:fable-5": {"percent": 50.0, "label": "Fable 5"}},
         "order": ["model:fable-5"]
     }'
@@ -268,7 +281,8 @@ test_model_scoped_non_object_item_skipped() {
     assert_common "$desc"
     assert_stdout "$desc" "5h ▓▓▓░░░░░ 42%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"five_hour": {"percent": 42.3, "resets_epoch": 1788550200}},
         "order": ["five_hour"]
     }'
@@ -304,7 +318,8 @@ test_model_scoped_slug_collision_first_wins() {
     assert_common "$desc"
     assert_stdout "$desc" "Fable ▓░░░░░░░ 10%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"model:fable": {"percent": 10.0, "label": "Fable"}},
         "order": ["model:fable"]
     }'
@@ -316,7 +331,8 @@ test_model_scoped_label_middle_dot_removed() {
     assert_common "$desc"
     assert_stdout "$desc" "FableBeta ▓▓▓░░░░░ 33%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"model:fablebeta": {"percent": 33.0, "label": "FableBeta"}},
         "order": ["model:fablebeta"]
     }'
@@ -337,7 +353,7 @@ test_model_scoped_label_empty_after_sanitization_skipped() {
     run_hook "$(jq -n '{rate_limits: {model_scoped: [{display_name: "\n\t·  ", utilization: 44.0, resets_at: null}]}}')"
     assert_common "$desc"
     assert_stdout "$desc" "Claude: no data"
-    assert_state_file "$desc" '{"schema": 1, "limits": {}, "order": []}'
+    assert_state_file "$desc" '{"schema": 2, "profile": {"id": "default", "label": "default"}, "limits": {}, "order": []}'
 }
 
 # ---------------------------------------------------------------------------
@@ -349,7 +365,8 @@ test_extra_usage_present() {
     assert_common "$desc"
     assert_stdout "$desc" "5h ▓▓▓░░░░░ 42%"
     assert_state_file "$desc" '{
-        "schema": 1,
+        "schema": 2,
+        "profile": {"id": "default", "label": "default"},
         "limits": {"five_hour": {"percent": 42.3, "resets_epoch": 1788550200}},
         "order": ["five_hour"],
         "extra_usage": {"percent": 31.0, "used_credits": 12.4, "monthly_limit": 40.0, "currency": "USD"}
@@ -430,7 +447,7 @@ test_state_path_xdg_state_home() {
     run_hook_env "$(fixture five_hour_only.json)" "$tmp" "XDG_STATE_HOME=$tmp/xdg"
     assert_common "$desc"
     assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
-    if [[ -f "$tmp/xdg/claude-usage/latest.json" ]]; then pass
+    if [[ -f "$tmp/xdg/claude-usage/default.json" ]]; then pass
     else fail "$desc: файл состояния не создан по XDG_STATE_HOME"; fi
 }
 
@@ -440,7 +457,7 @@ test_state_path_default_home() {
     run_hook_env "$(fixture five_hour_only.json)" "$tmp" "HOME=$tmp/home"
     assert_common "$desc"
     assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
-    if [[ -f "$tmp/home/.local/state/claude-usage/latest.json" ]]; then pass
+    if [[ -f "$tmp/home/.local/state/claude-usage/default.json" ]]; then pass
     else fail "$desc: файл состояния не создан по умолчанию \$HOME/.local/state"; fi
 }
 
@@ -464,6 +481,203 @@ test_no_leftover_tmp_files() {
     local extra
     extra="$(find "$(dirname "$HOOK_STATE_FILE")" -maxdepth 1 -type f ! -name 'latest.json' | wc -l)"
     assert_eq "$desc" "0" "$extra"
+}
+
+# ---------------------------------------------------------------------------
+# Профиль: имя файла состояния и блок profile в схеме 2
+# ---------------------------------------------------------------------------
+test_profile_default_no_config_dir() {
+    local desc="профиль: без CLAUDE_CONFIG_DIR — файл default.json"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" "HOME=$tmp/home"
+    assert_common "$desc"
+    assert_stdout "$desc" "5h ▓▓░░░░░░ 20%"
+    if [[ -f "$tmp/home/.local/state/claude-usage/default.json" ]]; then pass
+    else fail "$desc: файл состояния не создан как default.json"; fi
+}
+
+test_profile_named_from_config_dir() {
+    local desc="профиль: CLAUDE_CONFIG_DIR=.../.claude-personal — файл personal.json"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal"
+    assert_common "$desc"
+    if [[ -f "$tmp/home/.local/state/claude-usage/personal.json" ]]; then pass
+    else fail "$desc: файл состояния не создан как personal.json"; fi
+}
+
+test_profile_schema_and_fields() {
+    local desc="профиль: schema=2, profile.id и profile.label из CLAUDE_USAGE_PROFILE_LABEL"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal" \
+        "CLAUDE_USAGE_PROFILE_LABEL=own"
+    assert_common "$desc"
+    local state_file="$tmp/home/.local/state/claude-usage/personal.json"
+    if [[ ! -f "$state_file" ]]; then fail "$desc: файл состояния не создан"; return; fi
+    assert_eq "$desc: schema" "2" "$(jq -r '.schema' "$state_file")"
+    assert_eq "$desc: profile.id" "personal" "$(jq -r '.profile.id' "$state_file")"
+    assert_eq "$desc: profile.label" "own" "$(jq -r '.profile.label' "$state_file")"
+}
+
+test_profile_label_defaults_to_id() {
+    local desc="профиль: без CLAUDE_USAGE_PROFILE_LABEL — profile.label равен id"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal"
+    assert_common "$desc"
+    local state_file="$tmp/home/.local/state/claude-usage/personal.json"
+    if [[ ! -f "$state_file" ]]; then fail "$desc: файл состояния не создан"; return; fi
+    assert_eq "$desc: profile.label" "personal" "$(jq -r '.profile.label' "$state_file")"
+}
+
+# Регрессия: CLAUDE_USAGE_PROFILE_LABEL — пользовательская строка, но раньше
+# писалась в файл состояния как есть. "·" в ней читался бы как разделитель
+# самой статус-строки, а управляющий символ дошёл бы неповреждённым до
+# однострочной метки в трее. sanitize_label уже решает ровно эту задачу для
+# display_name модели — здесь та же санация, не вторая копия.
+test_profile_label_is_sanitized_like_model_display_name() {
+    local desc="профиль: CLAUDE_USAGE_PROFILE_LABEL санируется как display_name"
+    local tmp; tmp="$(mktemp -d)"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal" \
+        "CLAUDE_USAGE_PROFILE_LABEL=$(printf 'Work \x01· Fake')"
+    assert_common "$desc"
+    local state_file="$tmp/home/.local/state/claude-usage/personal.json"
+    if [[ ! -f "$state_file" ]]; then fail "$desc: файл состояния не создан"; return; fi
+    assert_eq "$desc: profile.label" "Work Fake" "$(jq -r '.profile.label' "$state_file")"
+}
+
+test_profile_claude_usage_state_overrides_path() {
+    local desc="профиль: CLAUDE_USAGE_STATE по-прежнему определяет путь целиком"
+    local tmp; tmp="$(mktemp -d)"
+    local state_file="$tmp/custom/state.json"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "CLAUDE_USAGE_STATE=$state_file" \
+        "CLAUDE_CONFIG_DIR=$tmp/home/.claude-personal"
+    assert_common "$desc"
+    if [[ ! -f "$state_file" ]]; then fail "$desc: файл не создан по CLAUDE_USAGE_STATE"; return; fi
+    assert_eq "$desc: schema" "2" "$(jq -r '.schema' "$state_file")"
+    assert_eq "$desc: profile.id" "personal" "$(jq -r '.profile.id' "$state_file")"
+}
+
+# Паритет двух реализаций правила: bash пишет имя файла, python читает каталог.
+# Расхождение здесь означает, что один профиль виден в панели как два разных, —
+# ровно тот молчаливый обман, который вся схема должна исключать. Проверяются
+# вырожденные имена, потому что на «personal» сойдётся любая реализация.
+test_profile_id_matches_python_on_degenerate_names() {
+    local desc="профиль: bash и python дают один id"
+    local name produced expected tmp found
+    for name in ".claude-!!!" ".claude-Work  Acct" ".claude-my--profile" ".claude-личн" \
+                ".Claude-Personal" "..claude-work" ".claude-work//" ".claude-work!!" \
+                ".claude-Work" ".claude-личный" ".claude-работа" ".claude-Café" \
+                ".claude-default"; do
+        tmp="$(mktemp -d)"
+        run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+            "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/$name"
+        found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+        if [[ -z "$found" ]]; then fail "$desc [$name]: файл состояния не создан"; continue; fi
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/$name")"
+        assert_eq "$desc [$name]" "$expected" "$produced"
+    done
+
+    # CLAUDE_CONFIG_DIR из одних слэшей не имеет basename: срез хвостового "/"
+    # не должен схлопывать его в пустую строку раньше резолва пути (штатно
+    # недостижимо, но инвариант паритета заявлен без исключений).
+    local abs_dir
+    for abs_dir in "/" "//" "///"; do
+        tmp="$(mktemp -d)"
+        run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+            "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$abs_dir"
+        found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+        if [[ -z "$found" ]]; then fail "$desc [$abs_dir]: файл состояния не создан"; continue; fi
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$abs_dir")"
+        assert_eq "$desc [$abs_dir]" "$expected" "$produced"
+    done
+
+    # Симлинк на другой каталог: идентификатор обязан выйти из имени цели,
+    # а не имени ссылки, иначе один и тот же профиль по двум маршрутам
+    # молча раздваивается на два файла состояния (см. фикс-раунд 1).
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/home/.claude-real-work-target"
+    ln -s ".claude-real-work-target" "$tmp/home/.claude-alias"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-alias"
+    found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+    if [[ -z "$found" ]]; then
+        fail "$desc [симлинк]: файл состояния не создан"
+    else
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/.claude-alias")"
+        assert_eq "$desc [симлинк]" "$expected" "$produced"
+    fi
+
+    # Симлинк, чья цель лежит за несуществующим промежуточным каталогом:
+    # readlink -f требует существования всех компонентов кроме последнего и
+    # падает здесь, python Path.resolve() нестрогий и резолвит цель всегда
+    # (см. фикс-раунд 2) — без -m bash откатывался на имя ссылки вместо
+    # имени цели.
+    tmp="$(mktemp -d)"
+    mkdir -p "$tmp/home"
+    ln -s "nested-missing/.claude-deep-target" "$tmp/home/.claude-alias-deep"
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-alias-deep"
+    found="$(find "$tmp/home/.local/state/claude-usage" -name '*.json' 2>/dev/null | head -1)"
+    if [[ -z "$found" ]]; then
+        fail "$desc [симлинк через несуществующий каталог]: файл состояния не создан"
+    else
+        produced="$(basename "$found" .json)"
+        expected="$(PYTHONPATH="$ROOT_DIR/src" /usr/bin/python3 -c \
+            'import sys
+from claude_usage_indicator.profiles import profile_id_from_config_dir
+print(profile_id_from_config_dir(sys.argv[1]))' "$tmp/home/.claude-alias-deep")"
+        assert_eq "$desc [симлинк через несуществующий каталог]" "$expected" "$produced"
+    fi
+}
+
+# Перф: profile_id() форкает sha256sum на ветке хэша (лоссовый слаг или
+# совпадение с "default") — за один прогон хука id неизменен, поэтому и
+# форк должен случиться один раз, а не на каждый из трёх вызовов profile_id()
+# (state_path(), profile_label по умолчанию, profile.id в файле состояния).
+# Заглушка sha256sum считает вызовы и делегирует настоящему бинарю, чтобы
+# сам результат хука не изменился.
+test_profile_id_hashes_config_dir_once_per_hook_run() {
+    local desc="profile_id(): sha256sum вызывается один раз за прогон хука"
+    local tmp; tmp="$(mktemp -d)"
+    local stub_dir="$tmp/stubbin"
+    mkdir -p "$stub_dir"
+    local counter="$tmp/sha256_calls"
+    : > "$counter"
+    local real_sha256sum
+    real_sha256sum="$(command -v sha256sum)"
+    cat > "$stub_dir/sha256sum" <<STUB_EOF
+#!/usr/bin/env bash
+printf '1\n' >> "$counter"
+exec "$real_sha256sum" "\$@"
+STUB_EOF
+    chmod +x "$stub_dir/sha256sum"
+
+    # ".claude-default" — basename без "claude-" даёт слаг "default", а он
+    # зарезервирован: profile_id() уходит на ветку хэша, как и на любом
+    # лоссовом слаге.
+    run_hook_env "$(fixture five_hour_only.json)" "$tmp" \
+        "HOME=$tmp/home" "CLAUDE_CONFIG_DIR=$tmp/home/.claude-default" \
+        "PATH=$stub_dir:$PATH"
+    assert_common "$desc"
+    local calls
+    calls="$(wc -l < "$counter" | tr -d ' ')"
+    assert_eq "$desc: sha256sum вызван один раз" "1" "$calls"
 }
 
 main() {
@@ -497,6 +711,14 @@ main() {
     test_state_path_default_home
     test_state_path_home_and_xdg_unset
     test_no_leftover_tmp_files
+    test_profile_default_no_config_dir
+    test_profile_named_from_config_dir
+    test_profile_schema_and_fields
+    test_profile_label_defaults_to_id
+    test_profile_label_is_sanitized_like_model_display_name
+    test_profile_claude_usage_state_overrides_path
+    test_profile_id_matches_python_on_degenerate_names
+    test_profile_id_hashes_config_dir_once_per_hook_run
 
     echo "---"
     echo "pass=$pass_count fail=$fail_count"

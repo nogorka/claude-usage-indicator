@@ -113,6 +113,8 @@ unit_dir_of() { printf '%s/.config/systemd/user' "$1"; }
 settings_path_of() { printf '%s/.claude/settings.json' "$1"; }
 backup_path_of() { printf '%s/.claude/settings.json.bak' "$1"; }
 systemctl_log_of() { printf '%s/.systemctl.log' "$1"; }
+# Каталог состояния хука: ветка по умолчанию без XDG_STATE_HOME.
+state_dir_of() { printf '%s/.local/state/claude-usage' "$1"; }
 
 # Прогоняет install.sh/uninstall.sh на изолированном $HOME со стаб-systemctl
 # на $PATH; кладёт результат в глобальные RUN_*. PYTHON=/usr/bin/python3
@@ -334,6 +336,38 @@ test_install_unit_file_regenerated_not_appended() {
     assert_contains "$desc: новое содержимое актуально" "$content" "Environment=PYTHONPATH=$ROOT_DIR/src"
 }
 
+test_install_removes_legacy_latest_json_when_default_exists() {
+    local desc="install: legacy latest.json удаляется, если рядом уже есть default.json"
+    new_tmp_dir; local home="$NEW_TMP_DIR"
+    unset -v XDG_STATE_HOME
+    local state_dir; state_dir="$(state_dir_of "$home")"
+    mkdir -p "$state_dir"
+    printf '{"schema":1,"limits":{}}\n' > "$state_dir/latest.json"
+    printf '{"schema":2,"profile":{"id":"default"},"limits":{}}\n' > "$state_dir/default.json"
+
+    run_script "$INSTALL_SH" "$home"
+
+    assert_eq "$desc: exit" "0" "$RUN_EXIT"
+    assert_absent "$desc: latest.json удалён" "$state_dir/latest.json"
+    assert_exists "$desc: default.json остался" "$state_dir/default.json"
+    assert_eq "$desc: default.json не тронут" \
+        '{"schema":2,"profile":{"id":"default"},"limits":{}}' "$(cat "$state_dir/default.json")"
+}
+
+test_install_keeps_latest_json_when_it_is_the_only_state_file() {
+    local desc="install: latest.json — единственный файл состояния — не удаляется"
+    new_tmp_dir; local home="$NEW_TMP_DIR"
+    unset -v XDG_STATE_HOME
+    local state_dir; state_dir="$(state_dir_of "$home")"
+    mkdir -p "$state_dir"
+    printf '{"schema":1,"limits":{}}\n' > "$state_dir/latest.json"
+
+    run_script "$INSTALL_SH" "$home"
+
+    assert_eq "$desc: exit" "0" "$RUN_EXIT"
+    assert_exists "$desc: latest.json остался" "$state_dir/latest.json"
+}
+
 # =============================================================================
 # uninstall.sh — disable_unit()/remove_unit_file()/unlink_hook(): симметричные ветки
 # =============================================================================
@@ -516,6 +550,8 @@ main() {
     test_install_order_guarantee_conflict_aborts_before_side_effects
     test_install_preserves_existing_settings_keys
     test_install_unit_file_regenerated_not_appended
+    test_install_removes_legacy_latest_json_when_default_exists
+    test_install_keeps_latest_json_when_it_is_the_only_state_file
 
     test_uninstall_unit_absent_is_noop_for_disable_and_remove
     test_uninstall_unlink_hook_missing_symlink

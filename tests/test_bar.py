@@ -5,6 +5,7 @@ import os
 import time
 import unittest
 
+from claude_usage_indicator import bar, state
 from claude_usage_indicator.bar import (
     _plural_en,
     format_age,
@@ -14,20 +15,18 @@ from claude_usage_indicator.bar import (
     panel_key,
     panel_label,
     panel_state,
-    problem_text,
     render_bar,
 )
 from claude_usage_indicator.state import _MAX_RESETS_EPOCH, Snapshot, Window
 
 
-def _snapshot(windows: dict, order: tuple, updated_epoch=1_000_000, problem=None) -> Snapshot:
+def _snapshot(windows: dict, order: tuple, updated_epoch=1_000_000) -> Snapshot:
     """Собирает Snapshot напрямую, минуя чтение файла — bar.py не знает про state.py-парсинг."""
     return Snapshot(
         updated_epoch=updated_epoch,
         windows=windows,
         order=order,
         extra_usage=None,
-        problem=problem,
     )
 
 
@@ -82,7 +81,7 @@ class PanelLabelTests(unittest.TestCase):
             "seven_day": Window(percent=55.0, resets_epoch=None, label="7 days"),
         }
         snapshot = _snapshot(windows, ("five_hour", "seven_day"))
-        label = panel_label(snapshot)
+        label = panel_label(snapshot, now_epoch=1_000_000)
         self.assertIn("5h ", label)
         self.assertIn("7d ", label)
         self.assertIn(" · ", label)  # разделитель ·
@@ -95,7 +94,7 @@ class PanelLabelTests(unittest.TestCase):
             "model:fable": Window(percent=21.0, resets_epoch=None, label="Fable"),
         }
         snapshot = _snapshot(windows, ("five_hour", "seven_day", "model:fable"))
-        label = panel_label(snapshot)
+        label = panel_label(snapshot, now_epoch=1_000_000)
         self.assertEqual(
             label,
             "5h ▓▓▓░░░░░ 42% · "
@@ -106,29 +105,29 @@ class PanelLabelTests(unittest.TestCase):
     def test_only_one_window_no_separator(self) -> None:
         windows = {"five_hour": Window(percent=10.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
-        label = panel_label(snapshot)
+        label = panel_label(snapshot, now_epoch=1_000_000)
         self.assertNotIn("·", label)
         self.assertTrue(label.startswith("5h "))
 
     def test_no_windows_at_all_reports_no_data(self) -> None:
         snapshot = _snapshot({}, ())
-        self.assertEqual(panel_label(snapshot), "Claude: no data")
+        self.assertEqual(panel_label(snapshot, now_epoch=1_000_000), "Claude: no data")
 
-    def test_problem_snapshot_reports_no_data(self) -> None:
-        snapshot = _snapshot({}, (), updated_epoch=None, problem="no_file")
-        self.assertEqual(panel_label(snapshot), "Claude: no data")
+    def test_snapshot_without_updated_epoch_reports_no_data(self) -> None:
+        snapshot = _snapshot({}, (), updated_epoch=None)
+        self.assertEqual(panel_label(snapshot, now_epoch=1_000_000), "Claude: no data")
 
 
 class IsAlarmTests(unittest.TestCase):
     def test_exactly_at_threshold_triggers_alarm(self) -> None:
         windows = {"five_hour": Window(percent=80.0, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
-        self.assertTrue(is_alarm(snapshot))
+        self.assertTrue(is_alarm(snapshot, now_epoch=1_000_000))
 
     def test_just_below_threshold_does_not_trigger(self) -> None:
         windows = {"five_hour": Window(percent=79.9, resets_epoch=None, label="5 hours")}
         snapshot = _snapshot(windows, ("five_hour",))
-        self.assertFalse(is_alarm(snapshot))
+        self.assertFalse(is_alarm(snapshot, now_epoch=1_000_000))
 
     def test_model_scoped_window_can_trigger_alarm(self) -> None:
         """Fable, упёршийся в потолок, это ровно тот случай, ради которого индикатор делается."""
@@ -137,10 +136,10 @@ class IsAlarmTests(unittest.TestCase):
             "model:fable": Window(percent=95.0, resets_epoch=None, label="Fable"),
         }
         snapshot = _snapshot(windows, ("five_hour", "model:fable"))
-        self.assertTrue(is_alarm(snapshot))
+        self.assertTrue(is_alarm(snapshot, now_epoch=1_000_000))
 
     def test_no_windows_never_alarms(self) -> None:
-        self.assertFalse(is_alarm(_snapshot({}, ())))
+        self.assertFalse(is_alarm(_snapshot({}, ()), now_epoch=1_000_000))
 
 
 class IsStaleTests(unittest.TestCase):
@@ -224,6 +223,12 @@ class FormatAgeTests(unittest.TestCase):
         """2.5 минуты: builtin round() банковски округлил бы вниз к 2 (чётное) — тут нужен round-half-up."""
         self.assertEqual(format_age(0, now_epoch=150), "3 minutes ago")
 
+    def test_none_epoch_reads_as_no_data(self) -> None:
+        """state.py осознанно превращает битый/отсутствующий updated_epoch в None (см.
+        test_state.py::test_updated_epoch_missing_becomes_none) — format_age
+        обязан прочитать это как «нет данных», а не упасть на `now_epoch - None`."""
+        self.assertEqual(format_age(None, now_epoch=1000), "no data")
+
 
 class _FixedTzMixin:
     """Фиксирует TZ=UTC на время теста, чтобы format_reset не зависел от машины исполнителя."""
@@ -256,7 +261,10 @@ class FormatResetTests(_FixedTzMixin, unittest.TestCase):
     def test_past_reset_has_no_countdown(self) -> None:
         reset_epoch = 10 * 3600
         now_epoch = reset_epoch + 60
-        self.assertEqual(format_reset(reset_epoch, now_epoch), "resets at 10:00")
+        self.assertEqual(
+            format_reset(reset_epoch, now_epoch),
+            "window reset at 10:00 on 01.01; next window starts with the first session",
+        )
 
 
 class FormatResetExtremeTzTests(unittest.TestCase):
@@ -280,52 +288,398 @@ class FormatResetExtremeTzTests(unittest.TestCase):
         format_reset(_MAX_RESETS_EPOCH, now_epoch=0)
 
 
-class ProblemTextTests(unittest.TestCase):
-    """Человеческие формулировки problem для меню — «нет данных» больше не одно на всё."""
+class ExpiredWindowTests(unittest.TestCase):
+    def _window(self, percent, resets_epoch):
+        return state.Window(percent=percent, resets_epoch=resets_epoch, label="5h")
 
-    _KNOWN_CODES = (
-        "no_file",
-        "read_error",
-        "empty_file",
-        "bad_json",
-        "bad_root",
-        "bad_schema",
-        "bad_encoding",
-        "no_limits",
-    )
+    def test_window_past_its_reset_is_expired(self):
+        self.assertTrue(bar.is_expired(self._window(87.0, 1000), now_epoch=2000))
 
-    def test_none_has_no_text(self) -> None:
-        """problem=None — валидный файл с пустыми limits, объяснять нечего."""
-        self.assertIsNone(problem_text(None))
+    def test_window_before_its_reset_is_not_expired(self):
+        self.assertFalse(bar.is_expired(self._window(87.0, 3000), now_epoch=2000))
 
-    def test_every_known_code_has_non_empty_human_text(self) -> None:
-        for code in self._KNOWN_CODES:
-            with self.subTest(code=code):
-                text = problem_text(code)
-                self.assertIsInstance(text, str)
-                self.assertTrue(text)
+    def test_window_without_reset_epoch_is_never_expired(self):
+        self.assertFalse(bar.is_expired(self._window(87.0, None), now_epoch=2000))
 
-    def test_no_limits_message_matches_brief_wording(self) -> None:
-        self.assertEqual(
-            problem_text("no_limits"), "numbers will appear after the first request in Claude Code"
+    def test_expired_window_reports_zero_not_the_stale_number(self):
+        self.assertEqual(bar.effective_percent(self._window(87.0, 1000), now_epoch=2000), 0.0)
+
+    def test_live_window_reports_its_own_number(self):
+        self.assertEqual(bar.effective_percent(self._window(87.0, 3000), now_epoch=2000), 87.0)
+
+    def test_expired_window_does_not_raise_the_alarm(self):
+        snapshot = state.Snapshot(
+            updated_epoch=500,
+            windows={"five_hour": self._window(87.0, 1000)},
+            order=("five_hour",),
+            extra_usage=None,
+        )
+        self.assertFalse(bar.is_alarm(snapshot, now_epoch=2000))
+
+    def test_expired_window_renders_zero_in_the_panel(self):
+        snapshot = state.Snapshot(
+            updated_epoch=500,
+            windows={"five_hour": self._window(87.0, 1000)},
+            order=("five_hour",),
+            extra_usage=None,
+        )
+        self.assertIn("0%", bar.panel_label(snapshot, now_epoch=2000))
+        self.assertNotIn("87%", bar.panel_label(snapshot, now_epoch=2000))
+
+    def test_expired_reset_text_names_the_moment_and_promises_nothing(self):
+        text = bar.format_reset(1000, now_epoch=2000)
+        self.assertIn("window reset at", text)
+        self.assertIn("first session", text)
+        self.assertNotIn("in 0h", text)
+
+
+class FormatResetPanelTests(_FixedTzMixin, unittest.TestCase):
+    """Компактная метка сброса для панели: HH:MM в пределах суток, DD.MM дальше,
+    пусто после сброса — контраст с полной формой `format_reset` из меню."""
+
+    def test_under_24_hours_shows_time(self) -> None:
+        self.assertEqual(bar.format_reset_panel(18_300, now_epoch=0), "↻05:05")
+
+    def test_exactly_24_hours_shows_date_not_time(self) -> None:
+        self.assertEqual(bar.format_reset_panel(86_400, now_epoch=0), "↻02.01")
+
+    def test_more_than_24_hours_shows_date(self) -> None:
+        self.assertEqual(bar.format_reset_panel(190_800, now_epoch=0), "↻03.01")
+
+    def test_already_reset_has_no_marker(self) -> None:
+        self.assertEqual(bar.format_reset_panel(1_000, now_epoch=2_000), "")
+
+    def test_no_reset_epoch_has_no_marker(self) -> None:
+        self.assertEqual(bar.format_reset_panel(None, now_epoch=0), "")
+
+
+class MultiProfileBarTests(unittest.TestCase):
+    def _reading(self, *entries):
+        return state.Reading(profiles={e.profile_id: e for e in entries}, unreadable=())
+
+    def _entry(self, profile_id, label, five, seven, updated):
+        snapshot = state.Snapshot(
+            updated_epoch=updated,
+            windows={
+                "five_hour": state.Window(percent=five, resets_epoch=9_000, label="5h"),
+                "seven_day": state.Window(percent=seven, resets_epoch=9_000, label="7d"),
+            },
+            order=("five_hour", "seven_day"),
+            extra_usage=None,
+        )
+        return state.ProfileSnapshot(profile_id=profile_id, label=label, snapshot=snapshot)
+
+    def test_single_profile_renders_exactly_as_before(self):
+        entry = self._entry("default", "work", 42.0, 27.0, updated=8_000)
+        legacy, legacy_alarm = bar.panel_state(entry.snapshot, now_epoch=8_100)
+        new, new_alarm = bar.panel_state_for(self._reading(entry), now_epoch=8_100)
+        self.assertEqual(new, legacy)
+        self.assertEqual(new_alarm, legacy_alarm)
+
+    def test_two_profiles_each_contribute_their_binding_window(self):
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                self._entry("personal", "own", 11.0, 61.0, updated=8_000),
+            ),
+            now_epoch=8_100,
+        )
+        self.assertIn("work", label)
+        self.assertIn("42%", label)
+        self.assertNotIn("27%", label)
+        self.assertIn("own", label)
+        self.assertIn("61%", label)
+        self.assertNotIn("11%", label)
+        self.assertIn("↻", label)
+
+    def test_default_profile_comes_first_regardless_of_freshness(self):
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("personal", "own", 90.0, 90.0, updated=9_999),
+                self._entry("default", "work", 1.0, 1.0, updated=1),
+            ),
+            now_epoch=8_100,
+        )
+        self.assertLess(label.index("work"), label.index("own"))
+
+    def test_stale_profile_is_marked_and_the_fresh_one_is_not(self):
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                self._entry("personal", "own", 61.0, 11.0, updated=1),
+            ),
+            now_epoch=8_100,
+        )
+        head, tail = label.split("own")
+        self.assertNotIn("*", head.split("work")[1])
+        self.assertIn("*", tail)
+
+    def test_alarm_in_any_profile_raises_the_alarm(self):
+        _, alarm = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 1.0, 1.0, updated=8_000),
+                self._entry("personal", "own", 95.0, 1.0, updated=8_000),
+            ),
+            now_epoch=8_100,
+        )
+        self.assertTrue(alarm)
+
+    def test_no_profiles_at_all_is_the_no_data_label(self):
+        label, alarm = bar.panel_state_for(state.Reading(profiles={}, unreadable=()), now_epoch=1)
+        self.assertEqual(label, bar.panel_label_no_data())
+        self.assertFalse(alarm)
+
+    def test_expired_binding_window_has_no_reset_marker_in_the_panel(self):
+        expired_window = state.Window(percent=87.0, resets_epoch=1_000, label="5h")
+        expired_snapshot = state.Snapshot(
+            updated_epoch=8_000,
+            windows={"five_hour": expired_window},
+            order=("five_hour",),
+            extra_usage=None,
+        )
+        expired_entry = state.ProfileSnapshot(
+            profile_id="personal", label="own", snapshot=expired_snapshot
+        )
+        label, _ = bar.panel_state_for(
+            self._reading(
+                self._entry("default", "work", 42.0, 27.0, updated=8_000),
+                expired_entry,
+            ),
+            now_epoch=8_100,
+        )
+        self.assertNotIn("↻", label.split("own")[1])
+
+
+class ProfileChunkLabelTruncationTests(unittest.TestCase):
+    """Метка профиля в панели ограничена по длине — каталог конфига вроде
+    `~/.claude-my-very-long-personal-account-name` не должен растягивать панель.
+    Меню и окно «Подробнее» этому пределу не подчиняются, там места хватает."""
+
+    def _reading_with_label(self, label, has_windows=True):
+        if has_windows:
+            snapshot = state.Snapshot(
+                updated_epoch=8_000,
+                windows={"five_hour": state.Window(percent=42.0, resets_epoch=9_000, label="5h")},
+                order=("five_hour",),
+                extra_usage=None,
+            )
+        else:
+            snapshot = _snapshot({}, ())
+        entry = state.ProfileSnapshot(profile_id="long", label=label, snapshot=snapshot)
+        other = state.ProfileSnapshot(
+            profile_id="short",
+            label="own",
+            snapshot=state.Snapshot(
+                updated_epoch=8_000,
+                windows={"five_hour": state.Window(percent=10.0, resets_epoch=9_000, label="5h")},
+                order=("five_hour",),
+                extra_usage=None,
+            ),
+        )
+        return state.Reading(profiles={"long": entry, "short": other}, unreadable=())
+
+    def test_label_over_sixteen_chars_is_truncated_with_ellipsis(self):
+        long_label = "my-very-long-personal-account-name"  # 36 символов
+        label, _ = bar.panel_state_for(self._reading_with_label(long_label), now_epoch=8_100)
+        self.assertIn(long_label[:15] + "…", label)
+        self.assertNotIn(long_label, label)
+
+    def test_label_exactly_sixteen_chars_is_not_truncated(self):
+        boundary_label = "a" * 16
+        label, _ = bar.panel_state_for(self._reading_with_label(boundary_label), now_epoch=8_100)
+        self.assertIn(boundary_label, label)
+        self.assertNotIn("…", label)
+
+    def test_label_seventeen_chars_is_truncated(self):
+        over_label = "a" * 17
+        label, _ = bar.panel_state_for(self._reading_with_label(over_label), now_epoch=8_100)
+        self.assertIn("a" * 15 + "…", label)
+        self.assertNotIn(over_label, label)
+
+    def test_no_data_branch_also_truncates_the_label(self):
+        long_label = "my-very-long-personal-account-name"
+        label, _ = bar.panel_state_for(
+            self._reading_with_label(long_label, has_windows=False), now_epoch=8_100
+        )
+        self.assertIn(long_label[:15] + "…", label)
+        self.assertNotIn(long_label, label)
+
+    def test_menu_section_lines_keep_the_full_label(self):
+        long_label = "my-very-long-personal-account-name"
+        entry = state.ProfileSnapshot(
+            profile_id="long",
+            label=long_label,
+            snapshot=state.Snapshot(
+                updated_epoch=8_000,
+                windows={"five_hour": state.Window(percent=42.0, resets_epoch=9_000, label="5h")},
+                order=("five_hour",),
+                extra_usage=None,
+            ),
+        )
+        lines = bar.menu_section_lines(entry, now_epoch=8_100)
+        self.assertEqual(lines[0], long_label)
+
+
+class MenuSectionTests(unittest.TestCase):
+    def _entry(self):
+        return state.ProfileSnapshot(
+            profile_id="personal",
+            label="own",
+            snapshot=state.Snapshot(
+                updated_epoch=1_000,
+                windows={
+                    "five_hour": state.Window(percent=61.0, resets_epoch=9_000, label="5h"),
+                    "seven_day": state.Window(percent=11.0, resets_epoch=9_000, label="7d"),
+                },
+                order=("five_hour", "seven_day"),
+                extra_usage=None,
+            ),
         )
 
-    def test_no_file_message_matches_brief_wording(self) -> None:
+    def test_section_lines_name_the_profile_and_every_window(self):
+        lines = bar.menu_section_lines(self._entry(), now_epoch=8_000)
+        self.assertEqual(lines[0], "own")
+        self.assertTrue(any("61%" in line for line in lines))
+        self.assertTrue(any("11%" in line for line in lines))
+        self.assertTrue(any("as of" in line for line in lines))
+
+    def test_section_lines_carry_a_reset_text_for_every_window(self):
+        lines = bar.menu_section_lines(self._entry(), now_epoch=8_000)
+        self.assertEqual(sum("reset" in line for line in lines), 2)
+
+    def test_unreadable_files_produce_one_honest_line(self):
+        line = bar.unreadable_line(("broken.json", "junk.json"))
+        self.assertIn("broken.json", line)
+        self.assertIn("junk.json", line)
+
+    def test_no_unreadable_files_produce_no_line(self):
+        self.assertIsNone(bar.unreadable_line(()))
+
+    def test_section_lines_render_no_data_instead_of_raising_on_missing_epoch(self):
+        entry = state.ProfileSnapshot(
+            profile_id="personal",
+            label="own",
+            snapshot=_snapshot({}, (), updated_epoch=None),
+        )
+        lines = bar.menu_section_lines(entry, now_epoch=8_000)
+        self.assertEqual(lines[-1], "as of no data")
+
+    def test_multi_profile_menu_build_survives_one_profile_missing_its_epoch(self):
+        """Регрессия: до фикса `now_epoch - None` рвал сборку меню на первом же профиле
+        с updated_epoch=None, и весь тик менюшной пересборки падал (indicator._safe_set_menu
+        глотает исключение и оставляет старое меню навсегда)."""
+        healthy = self._entry()
+        broken = state.ProfileSnapshot(
+            profile_id="broken",
+            label="broken",
+            snapshot=_snapshot({}, (), updated_epoch=None),
+        )
+        lines = []
+        for entry in (healthy, broken):
+            lines.extend(bar.menu_section_lines(entry, now_epoch=8_000))
+        self.assertIn("as of no data", lines)
+
+
+class ExtraUsageLineTests(unittest.TestCase):
+    """Строка для меню трея — тот же процент, что окно «Подробнее» показывает
+    level bar'ом и отдельной цифрой, здесь одной строкой текста."""
+
+    def test_no_extra_usage_produces_no_line(self):
+        self.assertIsNone(bar.extra_usage_line(None))
+
+    def test_extra_usage_line_names_the_rounded_percent(self):
+        extra = state.ExtraUsage(percent=31.4, used_credits=12.4, monthly_limit=40.0, currency="USD")
+        self.assertEqual(bar.extra_usage_line(extra), "Extra usage 31%")
+
+    def test_rounding_matches_round_percent(self):
+        extra = state.ExtraUsage(percent=30.5, used_credits=None, monthly_limit=None, currency=None)
+        self.assertEqual(bar.extra_usage_line(extra), f"Extra usage {bar.round_percent(30.5)}%")
+
+
+class WindowLinesTests(unittest.TestCase):
+    """bar.window_lines — общий кирпич для текстовой строки меню (menu_section_lines)
+    и графических баров окна «Подробнее» (window.py): оба читают один и тот же обход
+    _iter_windows через этот тип, порядок и ярлыки гарантированно не разъедутся."""
+
+    def _snapshot_three_windows(self) -> Snapshot:
+        return Snapshot(
+            updated_epoch=1_000,
+            windows={
+                "five_hour": Window(percent=42.3, resets_epoch=9_000, label="5 hours"),
+                "seven_day": Window(percent=55.0, resets_epoch=9_000, label="7 days"),
+                "model:fable": Window(percent=21.0, resets_epoch=9_000, label="Fable"),
+            },
+            order=("five_hour", "seven_day", "model:fable"),
+            extra_usage=None,
+        )
+
+    def test_returns_one_entry_per_window_in_order_with_panel_key_labels(self) -> None:
+        lines = bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        self.assertEqual([wl.label for wl in lines], ["5h", "7d", "Fable"])
+
+    def test_percent_is_the_raw_effective_percent_not_pre_rounded(self) -> None:
+        lines = bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        self.assertEqual(lines[0].percent, 42.3)
+
+    def test_reset_text_matches_format_reset_for_the_same_window(self) -> None:
+        lines = bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        self.assertEqual(lines[2].reset_text, format_reset(9_000, now_epoch=1_000))
+
+    def test_no_windows_returns_an_empty_list(self) -> None:
+        self.assertEqual(bar.window_lines(_snapshot({}, ()), now_epoch=1_000), [])
+
+    def test_expired_window_reports_zero_effective_percent(self) -> None:
+        snapshot = Snapshot(
+            updated_epoch=500,
+            windows={"five_hour": Window(percent=87.0, resets_epoch=1_000, label="5 hours")},
+            order=("five_hour",),
+            extra_usage=None,
+        )
+        lines = bar.window_lines(snapshot, now_epoch=2_000)
+        self.assertEqual(lines[0].percent, 0.0)
+
+    def test_menu_section_lines_window_rows_are_built_from_window_lines(self) -> None:
+        """Регрессия против рассинхрона: если бы menu_section_lines когда-нибудь
+        стала форматировать окна отдельной копией цикла, эта проверка первой
+        заметила бы расхождение с тем, что видит окно «Подробнее»."""
+        entry = state.ProfileSnapshot(profile_id="p", label="own", snapshot=self._snapshot_three_windows())
+        lines = bar.menu_section_lines(entry, now_epoch=1_000)
+        window_rows = lines[1:-1]
+        expected = [
+            f"{wl.label} {render_bar(wl.percent)} {bar.round_percent(wl.percent)}% · {wl.reset_text}"
+            for wl in bar.window_lines(self._snapshot_three_windows(), now_epoch=1_000)
+        ]
+        self.assertEqual(window_rows, expected)
+
+
+class NoProfilesLineTests(unittest.TestCase):
+    """Первый запуск: каталог состояния пуст — ни одного профиля, ни одного мусорного
+    файла. Отличается от «профиль есть, но битый» (unreadable_line) и от «профиль есть,
+    но без лимитов ещё» (menu_section_lines сам это покажет) — здесь каталога как будто
+    не существует вовсе."""
+
+    def _profile_entry(self) -> state.ProfileSnapshot:
+        return state.ProfileSnapshot(
+            profile_id="default",
+            label="default",
+            snapshot=_snapshot({}, ()),
+        )
+
+    def test_empty_reading_gets_the_first_run_message(self):
+        reading = state.Reading(profiles={}, unreadable=())
         self.assertEqual(
-            problem_text("no_file"),
+            bar.no_profiles_line(reading),
             "Claude Code has never run with the hook installed",
         )
 
-    def test_known_codes_have_distinct_messages(self) -> None:
-        """Иначе разные проблемы снова неотличимы друг от друга в меню — та же болезнь, что чинили."""
-        messages = {problem_text(code) for code in self._KNOWN_CODES}
-        self.assertEqual(len(messages), len(self._KNOWN_CODES))
+    def test_reading_with_a_profile_has_no_line(self):
+        reading = state.Reading(profiles={"default": self._profile_entry()}, unreadable=())
+        self.assertIsNone(bar.no_profiles_line(reading))
 
-    def test_unknown_code_gets_generic_text_not_a_crash(self) -> None:
-        text = problem_text("some_future_hook_version_code")
-        self.assertIsInstance(text, str)
-        self.assertTrue(text)
-        self.assertNotIn(text, {problem_text(code) for code in self._KNOWN_CODES})
+    def test_reading_with_only_unreadable_files_has_no_line(self):
+        """Каталог не пуст — файл есть, просто не разобрался; это отдельное сообщение."""
+        reading = state.Reading(profiles={}, unreadable=("broken.json",))
+        self.assertIsNone(bar.no_profiles_line(reading))
 
 
 if __name__ == "__main__":

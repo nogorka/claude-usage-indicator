@@ -33,6 +33,14 @@ class StatusLineConflict(RuntimeError):
     """statusLine в settings.json занят значением, которое поставили не мы."""
 
 
+class SettingsIsSymlink(RuntimeError):
+    """Цель — символьная ссылка, а запись идёт через временный файл и replace.
+
+    Такая запись заменила бы ссылку обычным файлом, и профили, делящие один
+    settings.json, разъехались бы молча. Правится настоящий файл, не ссылка.
+    """
+
+
 def _expected_block(command: str) -> dict[str, Any]:
     return {"type": "command", "command": command, "refreshInterval": _REFRESH_INTERVAL_S}
 
@@ -61,20 +69,23 @@ def plan_install(settings: dict[str, Any], command: str) -> dict[str, Any] | Non
     if current == expected:
         return None
     if current is not None:
-        raise StatusLineConflict(
-            f"statusLine is already set: {json.dumps(current, ensure_ascii=False)}"
-        )
+        # Содержимое current не идёт в сообщение: command может нести секрет
+        # аргументом (например, токен), а это исключение всплывает в stderr.
+        raise StatusLineConflict("statusLine is already set to a value we didn't write")
     return {**settings, "statusLine": expected}
 
 
 def plan_uninstall(settings: dict[str, Any], command: str) -> dict[str, Any] | None:
     """Новый словарь настроек без нашего statusLine, либо None — менять нечего.
 
-    Чужой statusLine (не тот, что поставил бы install) не трогается: удаление
-    чужой конфигурации — не наша забота, это не откат наших же изменений.
+    Опознание идёт по command (путь нашего хука), а не по точному совпадению
+    всего блока: форма блока менялась (631a9ae добавил refreshInterval), и
+    инсталляции старше этого коммита несут на диске двухключевой вариант.
+    Чужой statusLine (другая command) не трогается: удаление чужой
+    конфигурации — не наша забота, это не откат наших же изменений.
     """
-    expected = _expected_block(command)
-    if settings.get("statusLine") != expected:
+    current = settings.get("statusLine")
+    if not isinstance(current, dict) or current.get("command") != command:
         return None
     return {key: value for key, value in settings.items() if key != "statusLine"}
 
@@ -113,6 +124,12 @@ def atomic_write(path: Path, data: dict[str, Any]) -> None:
 
 def _apply(action: str, command: str, settings_path: Path, dry_run: bool) -> int:
     """Читает settings.json, планирует правку и — если не dry-run — применяет её."""
+    if settings_path.is_symlink():
+        raise SettingsIsSymlink(
+            f"{settings_path} is a symlink to {settings_path.resolve()}; "
+            f"patch the real file instead: --settings {settings_path.resolve()}"
+        )
+
     try:
         settings = load_settings(settings_path)
     except (OSError, ValueError) as exc:
@@ -124,6 +141,7 @@ def _apply(action: str, command: str, settings_path: Path, dry_run: bool) -> int
         new_settings = planner(settings, command)
     except StatusLineConflict as exc:
         print(f"patch-settings: {exc}", file=sys.stderr)
+        print(f"Inspect {settings_path} to see what's there.", file=sys.stderr)
         print("Installation stopped, file untouched.", file=sys.stderr)
         return 1
 
@@ -155,7 +173,11 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="only print the plan, don't write anything to disk"
     )
     args = parser.parse_args(argv)
-    return _apply(args.action, args.command, args.settings, args.dry_run)
+    try:
+        return _apply(args.action, args.command, args.settings, args.dry_run)
+    except SettingsIsSymlink as exc:
+        print(f"patch-settings: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

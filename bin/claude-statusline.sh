@@ -172,34 +172,134 @@ def dedup_by_key:
    ]) as $segments
 | (if ($segments | length) == 0 then "Claude: no data" else ($segments | join(" · ")) end) as $status_line
 
-| {limits: $limits, order: $order, status_line: $status_line}
+| {limits: $limits, order: $order, status_line: $status_line, profile_label: sanitize_label($raw_profile_label)}
   + (if $extra_usage != null then {extra_usage: $extra_usage} else {} end)
 JQ_EOF
 )"
 
+# Разрешает путь до канонической формы (симлинк на цель, "..", повторные "/"),
+# как Path.resolve() на python-стороне. -m, не -f: -f падает, если цель
+# симлинка лежит за несуществующим промежуточным каталогом (readlink -f
+# требует существования всех компонентов кроме последнего целиком, включая
+# то, что лежит по ту сторону цепочки симлинков), а python resolve() по
+# умолчанию нестрогий и резолвит такую цепочку всегда — bash с -f откатывался
+# на имя ссылки вместо имени цели ровно в этом случае (см. фикс-раунд 2).
+# -m не требует существования вообще ничего, откат на исходный путь при
+# пустом выводе остаётся страховкой, а не основным путём.
+resolve_config_dir() {
+    local input="$1" resolved
+    resolved="$(readlink -m -- "$input" 2>/dev/null)" || resolved=""
+    printf '%s' "${resolved:-$input}"
+}
+
+# Идентификатор профиля из CLAUDE_CONFIG_DIR — правило совпадает с
+# profiles.profile_id_from_config_dir (bash пишет имя файла, python его читает,
+# расхождение значило бы, что один профиль виден в панели как два разных).
+# Идентификатор берётся с разрешённого пути: симлинк на другой каталог обязан
+# дать имя цели, а не имя ссылки, иначе один профиль по двум маршрутам молча
+# раздвоится на два файла состояния. Тем же разрешением снимается повторный
+# хвостовой "/" — readlink -m его убирает по пути.
+# LC_ALL=C на каждом tr/sed: под чужой локалью класс [^a-z0-9_-] и регистр
+# верхний/нижний ведут себя иначе, чем питоновский re/str.translate по
+# таблице ASCII — паритет реализаций требует фиксированной локали, а не
+# той, что досталась окружению вызова.
+# Перевод строки внутри CLAUDE_CONFIG_DIR вырезается раньше любой другой
+# обработки: sed/tr построчны и не видят "\n" как часть санируемой строки
+# (её отдаёт как разделитель между вызовами), а python re.sub видит и
+# заменяет — без общего среза здесь реализации разъезжались бы на путях
+# с переводом строки внутри.
+# Слаг, потерявший информацию при санитизации (изменился, опустел или занял
+# зарезервированное имя "default"), дополняется хэшем канонического пути —
+# иначе разные каталоги молча писали бы в один файл состояния. Регистр
+# basename потерей не считается и не хэшируется: ".claude-Work" и
+# ".claude-work" сознательно дают один и тот же id.
+# Ещё одна конструкция неочевидна намеренно, «очевидное» упрощение её ломает:
+#   sed -E, а не tr -c: tr заменяет каждый запрещённый байт на дефис, а питоновский
+#   [^a-z0-9_-]+ схлопывает последовательность в один. На «Work  Acct» это дало бы
+#   work--acct против work-acct. Схлопывать всё подряд через tr -s тоже нельзя:
+#   тогда разъедется легитимное имя my--profile, где дефисы разрешены.
+profile_id() {
+    local dir="${CLAUDE_CONFIG_DIR:-}"
+    dir="${dir//$'\n'/}"
+    if [[ -z "$dir" ]]; then printf 'default'; return; fi
+    # Стоп на "/", а не на пустой строке: путь из одних слэшей срезается до
+    # корня, как это делает Path.resolve() на python-стороне, а не до "",
+    # которая хэшировалась бы в другой id.
+    while [[ "$dir" == */ && "$dir" != "/" ]]; do dir="${dir%/}"; done
+    dir="$(resolve_config_dir "$dir")"
+    # "${HOME:-}", не голый $HOME: под set -u вызов без HOME в окружении
+    # (env -i без HOME, но с CLAUDE_USAGE_STATE и CLAUDE_CONFIG_DIR) уронит
+    # разбор параметра раньше, чем сработает любая внешняя обёртка "|| true".
+    if [[ -n "${HOME:-}" ]]; then
+        local home_claude; home_claude="$(resolve_config_dir "$HOME/.claude")"
+        if [[ "$dir" == "$home_claude" ]]; then printf 'default'; return; fi
+    fi
+    local name="${dir##*/}"
+    while [[ "$name" == .* ]]; do name="${name#.}"; done
+    name="$(LC_ALL=C printf '%s' "$name" | LC_ALL=C tr '[:upper:]' '[:lower:]')"
+    name="${name#claude-}"
+    local slug
+    slug="$(LC_ALL=C printf '%s' "$name" | LC_ALL=C sed -E 's/[^a-z0-9_-]+/-/g')"
+    while [[ "$slug" == -* ]]; do slug="${slug#-}"; done
+    while [[ "$slug" == *- ]]; do slug="${slug%-}"; done
+    if [[ "$slug" == "$name" && -n "$slug" && "$slug" != "default" ]]; then
+        printf '%s' "$slug"
+        return
+    fi
+    # Хэш — от канонического пути ($dir, уже без хвостового "/"), а не от
+    # имени каталога: два разных каталога с одним и тем же лоссовым слагом
+    # (например, оба нечитаемых в ASCII) обязаны разойтись, а хэш от имени
+    # их бы не различил.
+    local digest
+    digest="$(LC_ALL=C printf '%s' "$dir" | sha256sum | cut -c1-6)"
+    if [[ -n "$slug" ]]; then
+        printf '%s-%s' "$slug" "$digest"
+    else
+        printf 'profile-%s' "$digest"
+    fi
+}
+
+# Кэш profile_id() на весь прогон хука: идентификатор зависит только от
+# CLAUDE_CONFIG_DIR/HOME, за один прогон не меняется, а на хэш-ветке
+# profile_id() форкает sha256sum. main() заполняет кэш один раз до первого
+# использования; state_path() при прямом вызове без main() (как из тестов
+# на будущее) досчитывает сама — тут кэш не обязателен, а не пуст только
+# после main().
+# Присваивание внутри самой profile_id() эффекта не дало бы: все три места
+# использования стоят в $( ), это подоболочка, и её переменные в родителя
+# не возвращаются — поэтому кэш заполняется снаружи, в теле main().
+PROFILE_ID_CACHED=""
+
 # Путь файла состояния: CLAUDE_USAGE_STATE (тестируемость) важнее XDG-пути.
 # $HOME читаем через "${HOME:-}" — под set -u голый $HOME на окружении без
-# HOME (напр. cron) уронет разбор параметра с текстом в stderr раньше, чем
+# HOME (напр. cron) уронит разбор параметра с текстом в stderr раньше, чем
 # сработает любая обёртка "|| true" в вызывающем коде. Если не задан и
 # XDG_STATE_HOME, и HOME — печатаем пустую строку: писать состояние всё
 # равно некуда, write_state() эту пустоту ниже явно пропускает.
+# Имя файла — profile_id().json: один профиль = один файл, читатель на
+# python-стороне перечисляет каталог, не полагаясь на фиксированное имя.
 state_path() {
     if [[ -n "${CLAUDE_USAGE_STATE:-}" ]]; then
         printf '%s' "$CLAUDE_USAGE_STATE"
         return
     fi
+    local id="$PROFILE_ID_CACHED"
+    [[ -n "$id" ]] || id="$(profile_id)"
     if [[ -n "${XDG_STATE_HOME:-}" ]]; then
-        printf '%s/claude-usage/latest.json' "$XDG_STATE_HOME"
+        printf '%s/claude-usage/%s.json' "$XDG_STATE_HOME" "$id"
         return
     fi
     if [[ -n "${HOME:-}" ]]; then
-        printf '%s/.local/state/claude-usage/latest.json' "$HOME"
+        printf '%s/.local/state/claude-usage/%s.json' "$HOME" "$id"
         return
     fi
 }
 
 # Атомарная запись: mktemp в целевом каталоге (гарантия одной ФС с mv),
 # 0600 выставляется до переименования, mv -f поверх старого файла.
+# Префикс .tmp.* вместо latest.json.*: с файлом на профиль имя латентно
+# совпало бы с маской *.json читателя только по случайности; отдельный
+# префикс исключает эту гонку в принципе.
 write_state() {
     local content="$1"
     local path dir tmp
@@ -209,7 +309,7 @@ write_state() {
     fi
     dir="$(dirname -- "$path")"
     mkdir -p -m 0700 "$dir" 2>/dev/null || return 1
-    tmp="$(mktemp "$dir/latest.json.XXXXXX" 2>/dev/null)" || return 1
+    tmp="$(mktemp "$dir/.tmp.XXXXXX" 2>/dev/null)" || return 1
     chmod 0600 "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
     printf '%s' "$content" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
     mv -f "$tmp" "$path" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
@@ -226,12 +326,18 @@ main() {
         exit 0
     fi
 
+    # Единственное вычисление profile_id() за весь прогон — дальше state_path()
+    # и оба jq-вызова читают уже готовое значение из PROFILE_ID_CACHED.
+    PROFILE_ID_CACHED="$(profile_id)"
+
     # jq на пустом/из-одних-пробелов вводе тихо возвращает "" с кодом 0
     # (ноль JSON-значений в потоке — ноль применений фильтра), поэтому
     # синтаксической проверкой `jq empty` тут не обойтись: нужен ещё и
     # непустой результат основного фильтра.
     local result
-    result="$(printf '%s' "$raw" | jq -c "$JQ_FILTER" 2>/dev/null)" || result=""
+    result="$(printf '%s' "$raw" | jq -c \
+        --arg raw_profile_label "${CLAUDE_USAGE_PROFILE_LABEL:-$PROFILE_ID_CACHED}" \
+        "$JQ_FILTER" 2>/dev/null)" || result=""
     if [[ -z "$result" ]]; then
         exit 0
     fi
@@ -243,9 +349,17 @@ main() {
     local status_line
     status_line="$(printf '%s' "$result" | jq -r '.status_line' 2>/dev/null)" || status_line=""
 
+    # config_dir в файл не пишется: читателю он не нужен ни для чего, а вторая
+    # запись пути создала бы источник правды, который некому сверять с диском.
+    # profile.label берётся уже санированным из $result (.profile_label,
+    # см. JQ_FILTER) — той же sanitize_label, что чистит display_name модели,
+    # а не второй копией той же регулярки.
     local state_json
-    state_json="$(printf '%s' "$result" | jq -c --argjson epoch "$(date +%s)" '
-        {schema: 1, updated_epoch: $epoch, limits: .limits, order: .order}
+    state_json="$(printf '%s' "$result" | jq -c \
+        --argjson epoch "$(date +%s)" \
+        --arg profile_id "$PROFILE_ID_CACHED" '
+        {schema: 2, profile: {id: $profile_id, label: .profile_label},
+         updated_epoch: $epoch, limits: .limits, order: .order}
         + (if has("extra_usage") then {extra_usage: .extra_usage} else {} end)
     ' 2>/dev/null)" || state_json=""
 
