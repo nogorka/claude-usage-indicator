@@ -40,6 +40,15 @@ class LaunchCommandTests(unittest.TestCase):
             self._assignments(command)["CLAUDE_USAGE_PROFILE_LABEL"], "мой личный"
         )
 
+    def test_shell_is_an_interactive_login_shell(self):
+        """claude ставится менеджером версий node, а тот подключается из ~/.bashrc:
+        неинтерактивный login-shell его не читает, claude не находится, и терминал
+        закрывается раньше, чем человек успевает прочесть «command not found»."""
+        command = launcher.launch_command(
+            self._profile("default", "work", "/home/u/.claude"), home=Path("/home/u")
+        )
+        self.assertEqual(command[-3:-1], ["bash", "-lic"])
+
     def test_config_dir_wins_over_lossy_id_when_sanitization_collapses_to_default(self):
         """profile_id_from_config_dir может выродить непустой каталог в id "default"
         (например ~/.claude-личный) — проверять надо реальный каталог, а не производный id,
