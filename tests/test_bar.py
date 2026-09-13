@@ -376,7 +376,9 @@ class MultiProfileBarTests(unittest.TestCase):
         self.assertEqual(new, legacy)
         self.assertEqual(new_alarm, legacy_alarm)
 
-    def test_two_profiles_each_contribute_their_binding_window(self):
+    def test_two_profiles_each_show_their_five_hour_window(self):
+        # own: seven_day (61%) выше five_hour (11%), но панель обязана показать
+        # именно five_hour — недельное окно больше не вытесняет его в чанке.
         label, _ = bar.panel_state_for(
             self._reading(
                 self._entry("default", "work", 42.0, 27.0, updated=8_000),
@@ -388,9 +390,32 @@ class MultiProfileBarTests(unittest.TestCase):
         self.assertIn("42%", label)
         self.assertNotIn("27%", label)
         self.assertIn("own", label)
-        self.assertIn("61%", label)
-        self.assertNotIn("11%", label)
+        self.assertIn("11%", label)
+        self.assertNotIn("61%", label)
         self.assertIn("↻", label)
+
+    def test_profile_without_five_hour_window_falls_back_to_binding_window(self):
+        # Допущение: у профиля, которым ещё не работали, five_hour в снимке нет —
+        # тогда чанк остаётся на прежнем поведении (наибольший эффективный процент),
+        # а не пустеет.
+        only_seven_day = state.ProfileSnapshot(
+            profile_id="default",
+            label="default",
+            snapshot=_snapshot(
+                {"seven_day": state.Window(percent=3.0, resets_epoch=9_000, label="7d")},
+                ("seven_day",),
+                updated_epoch=8_000,
+            ),
+        )
+        label, _ = bar.panel_state_for(self._reading(only_seven_day), now_epoch=8_100)
+        self.assertIn("7d", label)
+        self.assertIn("3%", label)
+
+    def test_profile_chunk_bar_uses_three_cells_not_eight(self):
+        entry = self._entry("default", "work", 42.0, 27.0, updated=8_000)
+        chunk = bar._profile_chunk(entry, now_epoch=8_100)
+        self.assertIn(render_bar(42.0, cells=3), chunk)
+        self.assertNotIn(render_bar(42.0), chunk)
 
     def test_default_profile_comes_first_regardless_of_freshness(self):
         label, _ = bar.panel_state_for(

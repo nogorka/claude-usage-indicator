@@ -10,7 +10,7 @@
 set -euo pipefail
 
 MAIN_DIR="$HOME/.claude"
-NEW_DIR="$HOME/.claude-personal"
+NEW_DIR="$HOME/.claude-work"
 MAIN_CRED="$MAIN_DIR/.credentials.json"
 NEW_CRED="$NEW_DIR/.credentials.json"
 STAMP="$(date +%Y%m%d-%H%M%S)"
@@ -44,7 +44,7 @@ note() { printf '   %s\n' "$*"; }
 warn() { printf '\033[33m   ! %s\033[0m\n' "$*"; }
 die()  { printf '\033[31m\nОстановка: %s\033[0m\n' "$*" >&2; exit 1; }
 
-# Страховочная копия — живые токены рабочего аккаунта на диске (шаг 6 предлагает
+# Страховочная копия — живые токены аккаунта основного профиля на диске (шаг 6 предлагает
 # её удалить, но только на нормальном финише). Всё, что выходит раньше — die() на
 # любом шаге после копирования, Ctrl-C, любая другая причина — не должно оставлять
 # человека с забытым файлом секретов: он про него больше ниоткуда не узнает.
@@ -53,7 +53,7 @@ WIZARD_COMPLETED=0
 warn_if_safety_copy_left() {
     [[ -f "$SAFETY_COPY" && "$WIZARD_COMPLETED" != 1 ]] || return 0
     warn "визард остановился, страховочная копия токенов ещё на диске: $SAFETY_COPY"
-    warn "удали её руками, когда убедишься, что рабочий профиль цел, или используй как откат:"
+    warn "удали её руками, когда убедишься, что основной профиль цел, или используй как откат:"
     warn "  cp -p '$SAFETY_COPY' '$MAIN_CRED'"
 }
 trap warn_if_safety_copy_left EXIT
@@ -99,10 +99,10 @@ say "Предполётные проверки"
 command -v claude >/dev/null || die "claude не найден в PATH."
 command -v python3 >/dev/null || die "python3 не найден: без него не перенести логины MCP."
 [[ -d "$MAIN_DIR" ]] || die "нет каталога $MAIN_DIR."
-[[ -f "$MAIN_CRED" ]] || die "нет $MAIN_CRED — рабочий профиль не залогинен, переносить нечего."
+[[ -f "$MAIN_CRED" ]] || die "нет $MAIN_CRED — основной профиль не залогинен, переносить нечего."
 
 note "claude: $(claude --version)"
-note "рабочий профиль: $MAIN_DIR"
+note "основной профиль: $MAIN_DIR"
 note "новый профиль:   $NEW_DIR"
 
 HOME_CONFIG="$HOME/.claude.json"
@@ -110,7 +110,7 @@ HOME_CONFIG_HASH_BEFORE="$( [[ -f "$HOME_CONFIG" ]] && sha256sum "$HOME_CONFIG" 
 MAIN_ORG_BEFORE="$(cred_field "$MAIN_CRED" org)"
 MAIN_MCP_BEFORE="$(cred_field "$MAIN_CRED" mcp_count)"
 MAIN_HASH_BEFORE="$(sha256sum "$MAIN_CRED" | cut -d' ' -f1)"
-note "логинов MCP в рабочем профиле: $MAIN_MCP_BEFORE"
+note "логинов MCP в основном профиле: $MAIN_MCP_BEFORE"
 
 if pgrep -u "$USER" -f '(^|/)claude(\.exe)?( |$)' >/dev/null 2>&1; then
     warn "на машине есть живые процессы claude."
@@ -118,13 +118,13 @@ if pgrep -u "$USER" -f '(^|/)claude(\.exe)?( |$)' >/dev/null 2>&1; then
     confirm "Всё равно продолжать?" || die "закрой сессии Claude и запусти визард заново."
 fi
 
-say "Страховочная копия учётных данных рабочего профиля"
+say "Страховочная копия учётных данных основного профиля"
 note "Копия нужна ровно на один случай: если логин уйдёт не в тот профиль и затрёт"
-note "рабочий аккаунт вместе с $MAIN_MCP_BEFORE логинами MCP. Удалим её на шаге 6."
+note "аккаунт основного профиля вместе с $MAIN_MCP_BEFORE логинами MCP. Удалим её на шаге 6."
 confirm "Сделать копию в $SAFETY_COPY?" || die "без страховки визард не идёт: цена ошибки — повторный логин в 15 сервисов."
 cp -p "$MAIN_CRED" "$SAFETY_COPY"
 chmod 600 "$SAFETY_COPY"
-note "готово. Аварийный откат рабочего профиля: cp -p '$SAFETY_COPY' '$MAIN_CRED'"
+note "готово. Аварийный откат основного профиля: cp -p '$SAFETY_COPY' '$MAIN_CRED'"
 
 say "Шаг 1. Создать каталог второго профиля"
 if [[ -e "$NEW_DIR" ]]; then
@@ -185,7 +185,7 @@ else
 fi
 
 say "Шаг 3. Логин второго аккаунта — НЕОБРАТИМЫЙ ШАГ"
-warn "Откроется браузер. Входи ВТОРЫМ аккаунтом, не рабочим."
+warn "Откроется браузер. Входи аккаунтом ДЛЯ НОВОГО профиля, не тем, что уже залогинен в '$MAIN_DIR'."
 warn "Если войти тем же аккаунтом, второй подписки не появится — будет две копии одной."
 note "Команда: CLAUDE_CONFIG_DIR='$NEW_DIR' claude auth login --claudeai"
 note "Переменная выставляется только для этой команды, оболочка её не наследует."
@@ -197,20 +197,20 @@ login_rc=0
 CLAUDE_CONFIG_DIR="$NEW_DIR" claude auth login --claudeai || login_rc=$?
 [[ $login_rc -eq 0 ]] || warn "claude auth login вернул код $login_rc — проверки ниже покажут, что реально произошло."
 
-say "Проверка: рабочий профиль не задет"
+say "Проверка: основной профиль не задет"
 MAIN_ORG_AFTER="$(cred_field "$MAIN_CRED" org)"
 MAIN_MCP_AFTER="$(cred_field "$MAIN_CRED" mcp_count)"
 MAIN_HASH_AFTER="$(sha256sum "$MAIN_CRED" | cut -d' ' -f1)"
 
 if [[ "$MAIN_ORG_AFTER" != "$MAIN_ORG_BEFORE" || "$MAIN_MCP_AFTER" != "$MAIN_MCP_BEFORE" ]]; then
-    warn "рабочий профиль ИЗМЕНИЛСЯ: организация $( [[ "$MAIN_ORG_AFTER" == "$MAIN_ORG_BEFORE" ]] && echo 'та же' || echo 'ДРУГАЯ'), логинов MCP было $MAIN_MCP_BEFORE, стало $MAIN_MCP_AFTER."
-    die "логин ушёл не в тот профиль. Восстанови рабочий профиль: cp -p '$SAFETY_COPY' '$MAIN_CRED'"
+    warn "основной профиль ИЗМЕНИЛСЯ: организация $( [[ "$MAIN_ORG_AFTER" == "$MAIN_ORG_BEFORE" ]] && echo 'та же' || echo 'ДРУГАЯ'), логинов MCP было $MAIN_MCP_BEFORE, стало $MAIN_MCP_AFTER."
+    die "логин ушёл не в тот профиль. Восстанови основной профиль: cp -p '$SAFETY_COPY' '$MAIN_CRED'"
 fi
 if [[ "$MAIN_HASH_AFTER" != "$MAIN_HASH_BEFORE" ]]; then
-    note "файл рабочего профиля переписан, но аккаунт и все $MAIN_MCP_AFTER логинов MCP на месте"
+    note "файл основного профиля переписан, но аккаунт и все $MAIN_MCP_AFTER логинов MCP на месте"
     note "(так выглядит обычное обновление токена живой сессией)."
 else
-    note "рабочий профиль байт в байт тот же."
+    note "основной профиль байт в байт тот же."
 fi
 
 [[ -f "$NEW_CRED" ]] || die "во втором профиле не появился .credentials.json — логин не состоялся. Откат: rm -rf '$NEW_DIR'"
@@ -222,7 +222,7 @@ if [[ -f "$NEW_DIR/.claude.json" ]]; then
 else
     HOME_CONFIG_HASH_AFTER="$( [[ -f "$HOME_CONFIG" ]] && sha256sum "$HOME_CONFIG" | cut -d' ' -f1 || echo "нет файла" )"
     if [[ "$HOME_CONFIG_HASH_AFTER" != "$HOME_CONFIG_HASH_BEFORE" ]]; then
-        warn "своего .claude.json у второго профиля нет, а рабочий $HOME_CONFIG изменился."
+        warn "своего .claude.json у второго профиля нет, а основной $HOME_CONFIG изменился."
         warn "Похоже, CLAUDE_CONFIG_DIR не уводит .claude.json и профили делят конфигурацию."
         warn "Это единственное место процедуры, где факт взят чтением бинарника, а не запуском."
         note "Проверь руками: CLAUDE_CONFIG_DIR='$NEW_DIR' claude — и смотри, появился ли $NEW_DIR/.claude.json"
@@ -288,15 +288,15 @@ PY
 fi
 
 say "Шаг 5. Сверка обоих профилей"
-note "рабочий профиль:"
+note "основной профиль:"
 claude auth status --text 2>&1 | sed 's/^/     /' || warn "claude auth status вернул ошибку"
 note "второй профиль:"
 CLAUDE_CONFIG_DIR="$NEW_DIR" claude auth status --text 2>&1 | sed 's/^/     /' || warn "claude auth status вернул ошибку"
-note "логинов MCP: рабочий $(cred_field "$MAIN_CRED" mcp_count), второй $(cred_field "$NEW_CRED" mcp_count)"
+note "логинов MCP: основной $(cred_field "$MAIN_CRED" mcp_count), второй $(cred_field "$NEW_CRED" mcp_count)"
 note "права на хранилища: $(stat -c '%a' "$MAIN_CRED") и $(stat -c '%a' "$NEW_CRED") (должно быть 600 и 600)"
 
 say "Шаг 6. Убрать страховочную копию"
-warn "В $SAFETY_COPY лежат живые токены рабочего аккаунта. Пока она есть — это лишняя копия секретов на диске."
+warn "В $SAFETY_COPY лежат живые токены аккаунта основного профиля. Пока она есть — это лишняя копия секретов на диске."
 note "Удаляй, только если проверки выше сошлись."
 if confirm "Удалить страховочную копию?"; then
     rm -f "$SAFETY_COPY"
@@ -309,7 +309,7 @@ say "Готово"
 note "Запуск второго профиля:"
 note "  CLAUDE_CONFIG_DIR='$NEW_DIR' claude"
 note "Подпись профиля для индикатора (по плану мультипрофиля):"
-note "  CLAUDE_CONFIG_DIR='$NEW_DIR' CLAUDE_USAGE_PROFILE_LABEL='Личный' claude"
+note "  CLAUDE_CONFIG_DIR='$NEW_DIR' CLAUDE_USAGE_PROFILE_LABEL='Рабочий' claude"
 note ""
 if [[ -f "$NEW_CRED.bak-$STAMP" ]]; then
     note "Бэкап шага 4 остался на диске — это копия токенов. Удали, когда всё сойдётся:"

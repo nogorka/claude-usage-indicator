@@ -24,14 +24,16 @@ def launch_command(profile: Profile, home: Path | None = None) -> list[str]:
     """Аргументы запуска терминала с сессией в этом профиле.
 
     Профиль по умолчанию запускается без CLAUDE_CONFIG_DIR: так работает обычный
-    `claude`, и подменять его окружение незачем. `bash -lc` нужен ради login-shell:
-    без него в PATH может не оказаться claude, установленного в ~/.local/bin.
+    `claude`, и подменять его окружение незачем. Оболочка берётся и login, и
+    интерактивной (`-lic`): claude ставят менеджером версий node, а тот подключается
+    из ~/.bashrc, который неинтерактивная оболочка не читает. Без `-i` команда падает
+    на «command not found», и терминал закрывается быстрее, чем это можно прочесть.
     """
     base = home or Path.home()
     assignments = [f"CLAUDE_USAGE_PROFILE_LABEL={shlex.quote(profile.label)}"]
     if profile.config_dir != base / ".claude":
         assignments.append(f"CLAUDE_CONFIG_DIR={shlex.quote(str(profile.config_dir))}")
-    return [_TERMINAL, "--", "bash", "-lc", " ".join(["env", *assignments, "claude"])]
+    return [_TERMINAL, "--", "bash", "-lic", " ".join(["env", *assignments, "claude"])]
 
 
 def launch(
