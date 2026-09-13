@@ -36,6 +36,11 @@ _STALE_MARK = "*"
 # `<слаг>-<6 символов хэша>`; меню и окно «Подробнее» показывают метку без обрезки —
 # там она в отдельной строке, и место не в дефиците.
 _PANEL_LABEL_MAX_LEN = 16
+# Чанк профиля живёт в общей строке панели с другими профилями и не влезает
+# в топ-бар GNOME на восьми ячейках — обрезается многоточием целиком. Три
+# ячейки оставляют бар узнаваемым (пусто/половина/полно), но короче любой
+# реалистичной метки профиля.
+_PROFILE_CHUNK_BAR_CELLS = 3
 
 
 def _round_half_up(value: float) -> int:
@@ -183,20 +188,36 @@ def _truncate_panel_label(label: str) -> str:
     return label[: _PANEL_LABEL_MAX_LEN - 1] + "…"
 
 
+def _profile_chunk_window(snapshot: Snapshot, now_epoch: float) -> tuple[str, Window] | None:
+    """Окно, которое показывается в чанке профиля: пятичасовое, если оно есть в снимке.
+
+    Владелица хочет видеть в панели именно пятичасовое окно — недельное вытесняло
+    его каждый раз, когда набирало больший процент. Пятичасового окна в снимке не
+    бывает у профиля, которым ещё не работали (первая запись хука его не создаёт);
+    для такого профиля запасной путь — прежнее связывающее окно, чтобы чанк не
+    остался вовсе без окна.
+    """
+    five_hour_window = snapshot.windows.get(FIVE_HOUR)
+    if five_hour_window is not None:
+        return FIVE_HOUR, five_hour_window
+    return binding_window(snapshot, now_epoch)
+
+
 def _profile_chunk(entry: ProfileSnapshot, now_epoch: float) -> str:
-    """Один профиль в метке панели: связывающее окно, процент и компактная метка
-    его сброса.
+    """Один профиль в метке панели: пятичасовое окно (или связывающее — см.
+    `_profile_chunk_window`), процент и компактная метка его сброса.
 
     Все окна каждого профиля в панель GNOME не помещаются; полная разбивка по всем
     окнам и полное время сброса каждого живут в меню и в окне «Подробнее».
     """
     label = _truncate_panel_label(entry.label)
-    binding = binding_window(entry.snapshot, now_epoch)
-    if binding is None:
+    shown = _profile_chunk_window(entry.snapshot, now_epoch)
+    if shown is None:
         return f"{label} {_NO_DATA_LABEL}"
-    key, window = binding
+    key, window = shown
     percent = effective_percent(window, now_epoch)
-    chunk = f"{label} {panel_key(key, window)} {render_bar(percent)} {round_percent(percent)}%"
+    bar_text = render_bar(percent, cells=_PROFILE_CHUNK_BAR_CELLS)
+    chunk = f"{label} {panel_key(key, window)} {bar_text} {round_percent(percent)}%"
     if is_stale(entry.snapshot, now_epoch):
         chunk += _STALE_MARK
     reset_marker = format_reset_panel(window.resets_epoch, now_epoch)
